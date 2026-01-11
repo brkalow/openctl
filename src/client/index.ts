@@ -1,6 +1,8 @@
 import { Router } from "./router";
 import { renderSessionList, renderSessionDetail, renderNotFound } from "./views";
 import type { Session, Message, Diff } from "../db/schema";
+// Import @pierre/diffs - this registers the web component and provides FileDiff class
+import { FileDiff, getSingularPatch } from "@pierre/diffs";
 
 // Initialize router
 const router = new Router();
@@ -168,19 +170,49 @@ function attachSessionDetailHandlers(sessionId: string) {
   initializeDiffs();
 }
 
-async function initializeDiffs() {
-  const { renderDiff } = await import("./diff-renderer");
+// Track FileDiff instances for cleanup
+const diffInstances: FileDiff[] = [];
 
-  document.querySelectorAll("[data-diff-content]").forEach(async (el) => {
+function initializeDiffs() {
+  // Clean up previous instances
+  diffInstances.forEach((instance) => instance.cleanUp());
+  diffInstances.length = 0;
+
+  document.querySelectorAll("[data-diff-content]").forEach((el) => {
     const htmlEl = el as HTMLElement;
     const content = htmlEl.dataset.diffContent;
     const filename = htmlEl.dataset.filename || "file";
+
     if (content) {
       try {
-        const rendered = renderDiff(content, filename);
-        htmlEl.innerHTML = rendered;
+        // Parse the patch to get FileDiffMetadata
+        const fileDiff = getSingularPatch(content);
+
+        // Create FileDiff instance with options
+        const diffInstance = new FileDiff({
+          theme: { dark: "pierre-dark", light: "pierre-light" },
+          themeType: "dark",
+          diffStyle: "unified",
+          diffIndicators: "classic",
+          disableFileHeader: true,
+          overflow: "scroll",
+        });
+
+        // Create a container element
+        const container = document.createElement("diffs-container");
+        htmlEl.innerHTML = "";
+        htmlEl.appendChild(container);
+
+        // Render the diff
+        diffInstance.render({
+          fileDiff,
+          fileContainer: container,
+        });
+
+        diffInstances.push(diffInstance);
       } catch (err) {
         console.error("Failed to render diff:", err);
+        htmlEl.innerHTML = `<pre class="p-3 text-diff-del text-sm">Failed to render diff</pre>`;
       }
     }
   });
