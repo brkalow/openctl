@@ -1,8 +1,8 @@
 import { initializeDatabase } from "./db/schema";
 import { SessionRepository } from "./db/repository";
 import { createApiRoutes } from "./routes/api";
-import { sessionListPage } from "./views/sessionList";
-import { sessionDetailPage } from "./views/sessionDetail";
+import { SessionList } from "./components/SessionList";
+import { SessionDetail } from "./components/SessionDetail";
 import { join } from "path";
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
@@ -20,22 +20,56 @@ function html(content: string): Response {
   });
 }
 
+// JavaScript response helper
+function js(content: string): Response {
+  return new Response(content, {
+    headers: { "Content-Type": "application/javascript; charset=utf-8" },
+  });
+}
+
 const publicDir = join(import.meta.dir, "public");
+const stylesDir = join(import.meta.dir, "styles");
 
 // Start server
 const server = Bun.serve({
   port: PORT,
   hostname: HOST,
   routes: {
-    // Static files
-    "/css/style.css": new Response(Bun.file(join(publicDir, "css/style.css"))),
-    "/css/diff.css": new Response(Bun.file(join(publicDir, "css/diff.css"))),
+    // Static files - CSS
+    "/css/main.css": async () => {
+      const file = Bun.file(join(stylesDir, "main.css"));
+      const content = await file.text();
+      return new Response(content, {
+        headers: { "Content-Type": "text/css; charset=utf-8" },
+      });
+    },
+    // Legacy CSS routes (redirect to new)
+    "/css/style.css": async () => {
+      const file = Bun.file(join(stylesDir, "main.css"));
+      const content = await file.text();
+      return new Response(content, {
+        headers: { "Content-Type": "text/css; charset=utf-8" },
+      });
+    },
+    "/css/diff.css": async () => {
+      const file = Bun.file(join(stylesDir, "main.css"));
+      const content = await file.text();
+      return new Response(content, {
+        headers: { "Content-Type": "text/css; charset=utf-8" },
+      });
+    },
+
+    // JavaScript files
     "/js/app.js": new Response(Bun.file(join(publicDir, "js/app.js"))),
+    "/js/diff-renderer.js": new Response(Bun.file(join(publicDir, "js/diff-renderer.js")), {
+      headers: { "Content-Type": "application/javascript; charset=utf-8" },
+    }),
 
     // Page routes
     "/": () => {
       const sessions = repo.getAllSessions();
-      return html(sessionListPage(sessions));
+      const result = SessionList({ sessions });
+      return html(result.html);
     },
 
     "/sessions/:id": (req) => {
@@ -54,7 +88,8 @@ const server = Bun.serve({
         ? `${url.protocol}//${url.host}/s/${session.share_token}`
         : null;
 
-      return html(sessionDetailPage(session, messages, diffs, shareUrl));
+      const result = SessionDetail({ session, messages, diffs, shareUrl });
+      return html(result.html);
     },
 
     "/s/:shareToken": (req) => {
@@ -71,7 +106,8 @@ const server = Bun.serve({
 
       const shareUrl = `${url.protocol}//${url.host}/s/${session.share_token}`;
 
-      return html(sessionDetailPage(session, messages, diffs, shareUrl));
+      const result = SessionDetail({ session, messages, diffs, shareUrl });
+      return html(result.html);
     },
 
     // API routes
@@ -98,4 +134,4 @@ const server = Bun.serve({
   },
 });
 
-console.log(`🚀 Claude Session Archive running at http://${HOST}:${server.port}`);
+console.log(`Claude Session Archive running at http://${HOST}:${server.port}`);
