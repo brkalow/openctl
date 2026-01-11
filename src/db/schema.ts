@@ -3,6 +3,9 @@ import { Database } from "bun:sqlite";
 export function initializeDatabase(dbPath: string = "sessions.db"): Database {
   const db = new Database(dbPath);
 
+  // Enable foreign key enforcement
+  db.run("PRAGMA foreign_keys = ON");
+
   db.run(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,

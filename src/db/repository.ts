@@ -1,16 +1,51 @@
-import { Database } from "bun:sqlite";
+import { Database, Statement } from "bun:sqlite";
 import type { Session, Message, Diff } from "./schema";
 
 export class SessionRepository {
-  constructor(private db: Database) {}
+  // Cached prepared statements
+  private readonly stmts: {
+    createSession: Statement;
+    getSession: Statement;
+    getSessionByShareToken: Statement;
+    getAllSessions: Statement;
+    deleteSession: Statement;
+    insertMessage: Statement;
+    getMessages: Statement;
+    clearMessages: Statement;
+    insertDiff: Statement;
+    getDiffs: Statement;
+    clearDiffs: Statement;
+  };
+
+  constructor(private db: Database) {
+    // Initialize cached prepared statements
+    this.stmts = {
+      createSession: db.prepare(`
+        INSERT INTO sessions (id, title, description, claude_session_id, pr_url, share_token, project_path)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        RETURNING *
+      `),
+      getSession: db.prepare("SELECT * FROM sessions WHERE id = ?"),
+      getSessionByShareToken: db.prepare("SELECT * FROM sessions WHERE share_token = ?"),
+      getAllSessions: db.prepare("SELECT * FROM sessions ORDER BY created_at DESC"),
+      deleteSession: db.prepare("DELETE FROM sessions WHERE id = ?"),
+      insertMessage: db.prepare(`
+        INSERT INTO messages (session_id, role, content, timestamp, message_index)
+        VALUES (?, ?, ?, ?, ?)
+      `),
+      getMessages: db.prepare("SELECT * FROM messages WHERE session_id = ? ORDER BY message_index ASC"),
+      clearMessages: db.prepare("DELETE FROM messages WHERE session_id = ?"),
+      insertDiff: db.prepare(`
+        INSERT INTO diffs (session_id, filename, diff_content, diff_index)
+        VALUES (?, ?, ?, ?)
+      `),
+      getDiffs: db.prepare("SELECT * FROM diffs WHERE session_id = ? ORDER BY diff_index ASC"),
+      clearDiffs: db.prepare("DELETE FROM diffs WHERE session_id = ?"),
+    };
+  }
 
   createSession(session: Omit<Session, "created_at" | "updated_at">): Session {
-    const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, title, description, claude_session_id, pr_url, share_token, project_path)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      RETURNING *
-    `);
-    return stmt.get(
+    return this.stmts.createSession.get(
       session.id,
       session.title,
       session.description,
@@ -19,6 +54,48 @@ export class SessionRepository {
       session.share_token,
       session.project_path
     ) as Session;
+  }
+
+  // Create session with messages and diffs in a single transaction
+  createSessionWithData(
+    session: Omit<Session, "created_at" | "updated_at">,
+    messages: Omit<Message, "id">[],
+    diffs: Omit<Diff, "id">[]
+  ): Session {
+    const transaction = this.db.transaction(() => {
+      const created = this.stmts.createSession.get(
+        session.id,
+        session.title,
+        session.description,
+        session.claude_session_id,
+        session.pr_url,
+        session.share_token,
+        session.project_path
+      ) as Session;
+
+      for (const msg of messages) {
+        this.stmts.insertMessage.run(
+          msg.session_id,
+          msg.role,
+          msg.content,
+          msg.timestamp,
+          msg.message_index
+        );
+      }
+
+      for (const diff of diffs) {
+        this.stmts.insertDiff.run(
+          diff.session_id,
+          diff.filename,
+          diff.diff_content,
+          diff.diff_index
+        );
+      }
+
+      return created;
+    });
+
+    return transaction();
   }
 
   updateSession(id: string, updates: Partial<Omit<Session, "id" | "created_at">>): Session | null {
@@ -55,6 +132,7 @@ export class SessionRepository {
     fields.push("updated_at = datetime('now')");
     values.push(id);
 
+    // Dynamic query - can't be cached
     const stmt = this.db.prepare(`
       UPDATE sessions SET ${fields.join(", ")} WHERE id = ? RETURNING *
     `);
@@ -62,97 +140,83 @@ export class SessionRepository {
   }
 
   getSession(id: string): Session | null {
-    const stmt = this.db.prepare("SELECT * FROM sessions WHERE id = ?");
-    return stmt.get(id) as Session | null;
+    return this.stmts.getSession.get(id) as Session | null;
   }
 
   getSessionByShareToken(token: string): Session | null {
-    const stmt = this.db.prepare("SELECT * FROM sessions WHERE share_token = ?");
-    return stmt.get(token) as Session | null;
+    return this.stmts.getSessionByShareToken.get(token) as Session | null;
   }
 
   getAllSessions(): Session[] {
-    const stmt = this.db.prepare("SELECT * FROM sessions ORDER BY created_at DESC");
-    return stmt.all() as Session[];
+    return this.stmts.getAllSessions.all() as Session[];
   }
 
   deleteSession(id: string): boolean {
-    const stmt = this.db.prepare("DELETE FROM sessions WHERE id = ?");
-    const result = stmt.run(id);
+    const result = this.stmts.deleteSession.run(id);
     return result.changes > 0;
   }
 
-  addMessage(message: Omit<Message, "id">): Message {
-    const stmt = this.db.prepare(`
-      INSERT INTO messages (session_id, role, content, timestamp, message_index)
-      VALUES (?, ?, ?, ?, ?)
-      RETURNING *
-    `);
-    return stmt.get(
+  addMessage(message: Omit<Message, "id">): void {
+    this.stmts.insertMessage.run(
       message.session_id,
       message.role,
       message.content,
       message.timestamp,
       message.message_index
-    ) as Message;
+    );
   }
 
   addMessages(messages: Omit<Message, "id">[]): void {
-    const stmt = this.db.prepare(`
-      INSERT INTO messages (session_id, role, content, timestamp, message_index)
-      VALUES (?, ?, ?, ?, ?)
-    `);
     const transaction = this.db.transaction(() => {
       for (const msg of messages) {
-        stmt.run(msg.session_id, msg.role, msg.content, msg.timestamp, msg.message_index);
+        this.stmts.insertMessage.run(
+          msg.session_id,
+          msg.role,
+          msg.content,
+          msg.timestamp,
+          msg.message_index
+        );
       }
     });
     transaction();
   }
 
   getMessages(sessionId: string): Message[] {
-    const stmt = this.db.prepare(
-      "SELECT * FROM messages WHERE session_id = ? ORDER BY message_index ASC"
-    );
-    return stmt.all(sessionId) as Message[];
+    return this.stmts.getMessages.all(sessionId) as Message[];
   }
 
-  addDiff(diff: Omit<Diff, "id">): Diff {
-    const stmt = this.db.prepare(`
-      INSERT INTO diffs (session_id, filename, diff_content, diff_index)
-      VALUES (?, ?, ?, ?)
-      RETURNING *
-    `);
-    return stmt.get(diff.session_id, diff.filename, diff.diff_content, diff.diff_index) as Diff;
+  addDiff(diff: Omit<Diff, "id">): void {
+    this.stmts.insertDiff.run(
+      diff.session_id,
+      diff.filename,
+      diff.diff_content,
+      diff.diff_index
+    );
   }
 
   addDiffs(diffs: Omit<Diff, "id">[]): void {
-    const stmt = this.db.prepare(`
-      INSERT INTO diffs (session_id, filename, diff_content, diff_index)
-      VALUES (?, ?, ?, ?)
-    `);
     const transaction = this.db.transaction(() => {
       for (const diff of diffs) {
-        stmt.run(diff.session_id, diff.filename, diff.diff_content, diff.diff_index);
+        this.stmts.insertDiff.run(
+          diff.session_id,
+          diff.filename,
+          diff.diff_content,
+          diff.diff_index
+        );
       }
     });
     transaction();
   }
 
   getDiffs(sessionId: string): Diff[] {
-    const stmt = this.db.prepare(
-      "SELECT * FROM diffs WHERE session_id = ? ORDER BY diff_index ASC"
-    );
-    return stmt.all(sessionId) as Diff[];
+    return this.stmts.getDiffs.all(sessionId) as Diff[];
   }
 
   clearMessages(sessionId: string): void {
-    const stmt = this.db.prepare("DELETE FROM messages WHERE session_id = ?");
-    stmt.run(sessionId);
+    this.stmts.clearMessages.run(sessionId);
   }
 
   clearDiffs(sessionId: string): void {
-    const stmt = this.db.prepare("DELETE FROM diffs WHERE session_id = ?");
-    stmt.run(sessionId);
+    this.stmts.clearDiffs.run(sessionId);
   }
 }

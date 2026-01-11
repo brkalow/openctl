@@ -1,6 +1,28 @@
 import { SessionRepository } from "../db/repository";
 import type { Message, Diff } from "../db/schema";
 
+// JSON response helper
+function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", ...headers },
+  });
+}
+
+function jsonError(error: string, status: number): Response {
+  return json({ error }, status);
+}
+
+// URL validation
+function isValidHttpUrl(urlString: string): boolean {
+  try {
+    const url = new URL(urlString);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export function createApiRoutes(repo: SessionRepository) {
   return {
     // Create session
@@ -10,29 +32,23 @@ export function createApiRoutes(repo: SessionRepository) {
 
         const title = formData.get("title") as string;
         if (!title) {
-          return new Response(JSON.stringify({ error: "Title is required" }), {
-            status: 400,
-            headers: { "Content-Type": "application/json" },
-          });
+          return jsonError("Title is required", 400);
         }
 
-        const id = generateId();
-        const session = repo.createSession({
-          id,
-          title,
-          description: (formData.get("description") as string) || null,
-          claude_session_id: (formData.get("claude_session_id") as string) || null,
-          pr_url: (formData.get("pr_url") as string) || null,
-          share_token: null,
-          project_path: (formData.get("project_path") as string) || null,
-        });
+        const prUrl = formData.get("pr_url") as string;
+        if (prUrl && !isValidHttpUrl(prUrl)) {
+          return jsonError("Invalid PR URL - must be a valid HTTP(S) URL", 400);
+        }
 
-        // Process session data
+        // Parse data before creating session (fail fast)
         const sessionFile = formData.get("session_file") as File | null;
         const sessionData = formData.get("session_data") as string;
+        const diffFile = formData.get("diff_file") as File | null;
+        const diffData = formData.get("diff_data") as string;
+
+        const id = generateId();
 
         let messages: Omit<Message, "id">[] = [];
-
         if (sessionFile && sessionFile.size > 0) {
           const content = await sessionFile.text();
           messages = parseSessionData(content, id);
@@ -40,16 +56,7 @@ export function createApiRoutes(repo: SessionRepository) {
           messages = parseSessionData(sessionData, id);
         }
 
-        if (messages.length > 0) {
-          repo.addMessages(messages);
-        }
-
-        // Process diff data
-        const diffFile = formData.get("diff_file") as File | null;
-        const diffData = formData.get("diff_data") as string;
-
         let diffs: Omit<Diff, "id">[] = [];
-
         if (diffFile && diffFile.size > 0) {
           const content = await diffFile.text();
           diffs = parseDiffData(content, id);
@@ -57,21 +64,28 @@ export function createApiRoutes(repo: SessionRepository) {
           diffs = parseDiffData(diffData, id);
         }
 
-        if (diffs.length > 0) {
-          repo.addDiffs(diffs);
-        }
+        // Create session with all data in a transaction
+        repo.createSessionWithData(
+          {
+            id,
+            title,
+            description: (formData.get("description") as string) || null,
+            claude_session_id: (formData.get("claude_session_id") as string) || null,
+            pr_url: prUrl || null,
+            share_token: null,
+            project_path: (formData.get("project_path") as string) || null,
+          },
+          messages,
+          diffs
+        );
 
-        // Redirect to the new session
         return new Response(null, {
           status: 303,
-          headers: { Location: `/sessions/${session.id}` },
+          headers: { Location: `/sessions/${id}` },
         });
       } catch (error) {
         console.error("Error creating session:", error);
-        return new Response(JSON.stringify({ error: "Failed to create session" }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        });
+        return jsonError("Failed to create session", 500);
       }
     },
 
@@ -80,27 +94,26 @@ export function createApiRoutes(repo: SessionRepository) {
       try {
         const existing = repo.getSession(sessionId);
         if (!existing) {
-          return new Response(JSON.stringify({ error: "Session not found" }), {
-            status: 404,
-            headers: { "Content-Type": "application/json" },
-          });
+          return jsonError("Session not found", 404);
         }
 
         const formData = await req.formData();
 
         const title = formData.get("title") as string;
         if (!title) {
-          return new Response(JSON.stringify({ error: "Title is required" }), {
-            status: 400,
-            headers: { "Content-Type": "application/json" },
-          });
+          return jsonError("Title is required", 400);
+        }
+
+        const prUrl = formData.get("pr_url") as string;
+        if (prUrl && !isValidHttpUrl(prUrl)) {
+          return jsonError("Invalid PR URL - must be a valid HTTP(S) URL", 400);
         }
 
         repo.updateSession(sessionId, {
           title,
           description: (formData.get("description") as string) || null,
           claude_session_id: (formData.get("claude_session_id") as string) || null,
-          pr_url: (formData.get("pr_url") as string) || null,
+          pr_url: prUrl || null,
           project_path: (formData.get("project_path") as string) || null,
         });
 
@@ -146,10 +159,7 @@ export function createApiRoutes(repo: SessionRepository) {
         });
       } catch (error) {
         console.error("Error updating session:", error);
-        return new Response(JSON.stringify({ error: "Failed to update session" }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        });
+        return jsonError("Failed to update session", 500);
       }
     },
 
@@ -157,51 +167,33 @@ export function createApiRoutes(repo: SessionRepository) {
     deleteSession(sessionId: string): Response {
       const deleted = repo.deleteSession(sessionId);
       if (!deleted) {
-        return new Response(JSON.stringify({ error: "Session not found" }), {
-          status: 404,
-          headers: { "Content-Type": "application/json" },
-        });
+        return jsonError("Session not found", 404);
       }
-      return new Response(JSON.stringify({ success: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return json({ success: true });
     },
 
     // Create share link
     shareSession(sessionId: string): Response {
       const session = repo.getSession(sessionId);
       if (!session) {
-        return new Response(JSON.stringify({ error: "Session not found" }), {
-          status: 404,
-          headers: { "Content-Type": "application/json" },
-        });
+        return jsonError("Session not found", 404);
       }
 
       if (session.share_token) {
-        return new Response(JSON.stringify({ share_token: session.share_token }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+        return json({ share_token: session.share_token });
       }
 
       const shareToken = generateShareToken();
       repo.updateSession(sessionId, { share_token: shareToken });
 
-      return new Response(JSON.stringify({ share_token: shareToken }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return json({ share_token: shareToken });
     },
 
     // Get session as JSON (for export)
     getSessionJson(sessionId: string): Response {
       const session = repo.getSession(sessionId);
       if (!session) {
-        return new Response(JSON.stringify({ error: "Session not found" }), {
-          status: 404,
-          headers: { "Content-Type": "application/json" },
-        });
+        return jsonError("Session not found", 404);
       }
 
       const messages = repo.getMessages(sessionId);
@@ -219,11 +211,13 @@ export function createApiRoutes(repo: SessionRepository) {
 }
 
 function generateId(): string {
-  return `sess_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 9)}`;
+  const timestamp = Date.now().toString(36);
+  const randomPart = crypto.randomUUID().replace(/-/g, "").substring(0, 8);
+  return `sess_${timestamp}_${randomPart}`;
 }
 
 function generateShareToken(): string {
-  return `${Math.random().toString(36).substring(2, 10)}${Math.random().toString(36).substring(2, 10)}`;
+  return crypto.randomUUID().replace(/-/g, "");
 }
 
 function parseSessionData(content: string, sessionId: string): Omit<Message, "id">[] {
@@ -259,7 +253,7 @@ function parseSessionData(content: string, sessionId: string): Omit<Message, "id
           messages.push(msg);
           messageIndex++;
         }
-      } catch (e) {
+      } catch {
         // Skip invalid lines
       }
     }

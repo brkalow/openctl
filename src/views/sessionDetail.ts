@@ -21,16 +21,16 @@ export function sessionDetailPage(
       <div class="session-title-row">
         <h1>${escapeHtml(session.title)}</h1>
         <div class="session-actions">
-          ${session.pr_url ? `<a href="${escapeHtml(session.pr_url)}" target="_blank" class="btn btn-secondary">View PR</a>` : ""}
-          <button class="btn btn-secondary" onclick="shareSession('${escapeHtml(session.id)}')">Share</button>
+          ${session.pr_url ? `<a href="${escapeHtml(session.pr_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">View PR</a>` : ""}
+          <button class="btn btn-secondary" data-share-session="${escapeHtml(session.id)}">Share</button>
           <a href="/api/sessions/${escapeHtml(session.id)}/export" class="btn btn-secondary">Export</a>
         </div>
       </div>
       ${session.description ? `<p class="session-description">${escapeHtml(session.description)}</p>` : ""}
       <div class="resume-command">
         <span class="label">Resume:</span>
-        <code>${escapeHtml(resumeCommand)}</code>
-        <button class="btn-copy" onclick="copyToClipboard('${escapeHtml(resumeCommand)}')" title="Copy command">
+        <code id="resume-command">${escapeHtml(resumeCommand)}</code>
+        <button class="btn-copy" data-copy-target="resume-command" title="Copy command">
           📋
         </button>
       </div>
@@ -38,7 +38,7 @@ export function sessionDetailPage(
         <div class="share-url">
           <span class="label">Share URL:</span>
           <input type="text" value="${escapeHtml(shareUrl)}" readonly id="share-url-input" />
-          <button class="btn-copy" onclick="copyShareUrl()" title="Copy URL">📋</button>
+          <button class="btn-copy" data-copy-target="share-url-input" title="Copy URL">📋</button>
         </div>
       ` : ""}
     </div>

@@ -14,6 +14,27 @@ if (searchInput) {
   });
 }
 
+// Event delegation for buttons
+document.addEventListener("click", (e) => {
+  const target = e.target.closest("[data-copy-target]");
+  if (target) {
+    const targetId = target.dataset.copyTarget;
+    const element = document.getElementById(targetId);
+    if (element) {
+      const text = element.value !== undefined ? element.value : element.textContent;
+      copyToClipboard(text);
+    }
+    return;
+  }
+
+  const shareBtn = e.target.closest("[data-share-session]");
+  if (shareBtn) {
+    const sessionId = shareBtn.dataset.shareSession;
+    shareSession(sessionId);
+    return;
+  }
+});
+
 // Copy to clipboard
 function copyToClipboard(text) {
   navigator.clipboard.writeText(text).then(() => {
@@ -30,22 +51,14 @@ function copyToClipboard(text) {
   });
 }
 
-function copyShareUrl() {
-  const input = document.getElementById("share-url-input");
-  if (input) {
-    copyToClipboard(input.value);
-  }
-}
-
 // Share session
 async function shareSession(sessionId) {
   try {
-    const response = await fetch(`/api/sessions/${sessionId}/share`, {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/share`, {
       method: "POST",
     });
 
     if (response.ok) {
-      const data = await response.json();
       // Reload the page to show the share URL
       window.location.reload();
     } else {
