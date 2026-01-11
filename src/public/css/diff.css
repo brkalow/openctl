@@ -1,0 +1,84 @@
+/* Diff Styles */
+.diff-file {
+  margin-bottom: 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.diff-file-header {
+  background: var(--bg-tertiary);
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.diff-file-header .filename {
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.diff-content {
+  background: var(--bg-primary);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+.diff-line {
+  padding: 0 1rem;
+  white-space: pre;
+  min-height: 1.5em;
+}
+
+.diff-line.addition {
+  background: rgba(46, 160, 67, 0.15);
+  color: #3fb950;
+}
+
+.diff-line.deletion {
+  background: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+}
+
+.diff-line.hunk-header {
+  background: rgba(56, 139, 253, 0.1);
+  color: var(--accent-primary);
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-top: 1px solid var(--border-color);
+  margin-top: 0.5rem;
+}
+
+.diff-line.meta {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Scrollbar styling */
+.diff-content::-webkit-scrollbar,
+.messages::-webkit-scrollbar,
+.diffs::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.diff-content::-webkit-scrollbar-track,
+.messages::-webkit-scrollbar-track,
+.diffs::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+.diff-content::-webkit-scrollbar-thumb,
+.messages::-webkit-scrollbar-thumb,
+.diffs::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+.diff-content::-webkit-scrollbar-thumb:hover,
+.messages::-webkit-scrollbar-thumb:hover,
+.diffs::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
