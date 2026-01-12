@@ -1,5 +1,5 @@
 import { Database, Statement } from "bun:sqlite";
-import type { Session, Message, Diff } from "./schema";
+import type { Session, Message, Diff, Review, Annotation, AnnotationType } from "./schema";
 
 export class SessionRepository {
   // Cached prepared statements
@@ -15,6 +15,14 @@ export class SessionRepository {
     insertDiff: Statement;
     getDiffs: Statement;
     clearDiffs: Statement;
+    // Review statements
+    insertReview: Statement;
+    getReview: Statement;
+    getReviewWithCount: Statement;
+    // Annotation statements
+    insertAnnotation: Statement;
+    getAnnotationsByDiff: Statement;
+    getAnnotationsBySession: Statement;
   };
 
   constructor(private db: Database) {
@@ -41,6 +49,31 @@ export class SessionRepository {
       `),
       getDiffs: db.prepare("SELECT * FROM diffs WHERE session_id = ? ORDER BY diff_index ASC"),
       clearDiffs: db.prepare("DELETE FROM diffs WHERE session_id = ?"),
+      // Review statements
+      insertReview: db.prepare(`
+        INSERT INTO reviews (session_id, summary, model)
+        VALUES (?, ?, ?)
+        RETURNING *
+      `),
+      getReview: db.prepare("SELECT * FROM reviews WHERE session_id = ?"),
+      getReviewWithCount: db.prepare(`
+        SELECT r.*, COUNT(a.id) as annotation_count
+        FROM reviews r
+        LEFT JOIN annotations a ON a.review_id = r.id
+        WHERE r.session_id = ?
+        GROUP BY r.id
+      `),
+      // Annotation statements
+      insertAnnotation: db.prepare(`
+        INSERT INTO annotations (review_id, diff_id, line_number, side, annotation_type, content)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `),
+      getAnnotationsByDiff: db.prepare("SELECT * FROM annotations WHERE diff_id = ?"),
+      getAnnotationsBySession: db.prepare(`
+        SELECT a.* FROM annotations a
+        JOIN reviews r ON a.review_id = r.id
+        WHERE r.session_id = ?
+      `),
     };
   }
 
@@ -256,5 +289,165 @@ export class SessionRepository {
 
   clearDiffs(sessionId: string): void {
     this.stmts.clearDiffs.run(sessionId);
+  }
+
+  // Review methods
+  createReview(review: Omit<Review, "id" | "created_at">): Review {
+    return this.stmts.insertReview.get(
+      review.session_id,
+      review.summary,
+      review.model
+    ) as Review;
+  }
+
+  getReview(sessionId: string): Review | null {
+    return this.stmts.getReview.get(sessionId) as Review | null;
+  }
+
+  getReviewWithCount(sessionId: string): (Review & { annotation_count: number }) | null {
+    return this.stmts.getReviewWithCount.get(sessionId) as (Review & { annotation_count: number }) | null;
+  }
+
+  // Annotation methods
+  addAnnotation(annotation: Omit<Annotation, "id">): void {
+    this.stmts.insertAnnotation.run(
+      annotation.review_id,
+      annotation.diff_id,
+      annotation.line_number,
+      annotation.side,
+      annotation.annotation_type,
+      annotation.content
+    );
+  }
+
+  addAnnotations(annotations: Omit<Annotation, "id">[]): void {
+    const transaction = this.db.transaction(() => {
+      for (const annotation of annotations) {
+        this.stmts.insertAnnotation.run(
+          annotation.review_id,
+          annotation.diff_id,
+          annotation.line_number,
+          annotation.side,
+          annotation.annotation_type,
+          annotation.content
+        );
+      }
+    });
+    transaction();
+  }
+
+  getAnnotationsByDiff(diffId: number): Annotation[] {
+    return this.stmts.getAnnotationsByDiff.all(diffId) as Annotation[];
+  }
+
+  getAnnotationsBySession(sessionId: string): Annotation[] {
+    return this.stmts.getAnnotationsBySession.all(sessionId) as Annotation[];
+  }
+
+  getAnnotationsGroupedByDiff(sessionId: string): Record<number, Annotation[]> {
+    const annotations = this.getAnnotationsBySession(sessionId);
+    const grouped: Record<number, Annotation[]> = {};
+    for (const annotation of annotations) {
+      if (!grouped[annotation.diff_id]) {
+        grouped[annotation.diff_id] = [];
+      }
+      grouped[annotation.diff_id].push(annotation);
+    }
+    return grouped;
+  }
+
+  // Input type for annotations during upload (uses filename instead of diff_id)
+  createSessionWithDataAndReview(
+    session: Omit<Session, "created_at" | "updated_at">,
+    messages: Omit<Message, "id">[],
+    diffs: Omit<Diff, "id">[],
+    reviewData?: {
+      summary: string;
+      model?: string;
+      annotations: Array<{
+        filename: string;
+        line_number: number;
+        side: "additions" | "deletions";
+        annotation_type: AnnotationType;
+        content: string;
+      }>;
+    }
+  ): Session {
+    const transaction = this.db.transaction(() => {
+      // Create session
+      const created = this.stmts.createSession.get(
+        session.id,
+        session.title,
+        session.description,
+        session.claude_session_id,
+        session.pr_url,
+        session.share_token,
+        session.project_path,
+        session.model,
+        session.harness,
+        session.repo_url
+      ) as Session;
+
+      // Insert messages
+      for (const msg of messages) {
+        this.stmts.insertMessage.run(
+          msg.session_id,
+          msg.role,
+          msg.content,
+          JSON.stringify(msg.content_blocks || []),
+          msg.timestamp,
+          msg.message_index
+        );
+      }
+
+      // Insert diffs and track their IDs by filename
+      const diffIdByFilename = new Map<string, number>();
+      for (const diff of diffs) {
+        const result = this.db.prepare(`
+          INSERT INTO diffs (session_id, filename, diff_content, diff_index, additions, deletions, is_session_relevant)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          RETURNING id
+        `).get(
+          diff.session_id,
+          diff.filename,
+          diff.diff_content,
+          diff.diff_index,
+          diff.additions || 0,
+          diff.deletions || 0,
+          diff.is_session_relevant ? 1 : 0
+        ) as { id: number };
+
+        if (diff.filename) {
+          diffIdByFilename.set(diff.filename, result.id);
+        }
+      }
+
+      // Create review and annotations if provided
+      if (reviewData) {
+        const review = this.stmts.insertReview.get(
+          session.id,
+          reviewData.summary,
+          reviewData.model || null
+        ) as Review;
+
+        for (const ann of reviewData.annotations) {
+          const diffId = diffIdByFilename.get(ann.filename);
+          if (diffId) {
+            this.stmts.insertAnnotation.run(
+              review.id,
+              diffId,
+              ann.line_number,
+              ann.side,
+              ann.annotation_type,
+              ann.content
+            );
+          }
+        }
+      }
+
+      return created;
+    });
+
+    return transaction();
   }
 }

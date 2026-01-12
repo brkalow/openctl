@@ -1,9 +1,19 @@
 import { Router } from "./router";
-import { renderSessionList, renderSessionDetail, renderNotFound } from "./views";
-import type { Session, Message, Diff } from "../db/schema";
+import { renderSessionList, renderSessionDetail, renderNotFound, escapeHtml } from "./views";
+import type { Session, Message, Diff, Review, Annotation, AnnotationType } from "../db/schema";
 // Import @pierre/diffs - this registers the web component and provides FileDiff class
 import { FileDiff, getSingularPatch, File } from "@pierre/diffs";
-import type { SupportedLanguages } from "@pierre/diffs";
+import type { SupportedLanguages, DiffLineAnnotation } from "@pierre/diffs";
+
+// Annotation metadata for rendering
+interface AnnotationMetadata {
+  id: number;
+  type: AnnotationType;
+  content: string;
+  model: string | null;
+  filename: string;
+  lineNumber: number;
+}
 
 // Initialize router
 const router = new Router();
@@ -57,11 +67,21 @@ async function fetchSessions(): Promise<Session[]> {
   return data.sessions || [];
 }
 
+interface ReviewWithCount extends Review {
+  annotation_count: number;
+}
+
 interface SessionDetailData {
   session: Session;
   messages: Message[];
   diffs: Diff[];
   shareUrl: string | null;
+  review?: ReviewWithCount | null;
+}
+
+interface AnnotationsData {
+  review: Review | null;
+  annotations_by_diff: Record<number, Annotation[]>;
 }
 
 async function fetchSessionDetail(id: string): Promise<SessionDetailData | null> {
@@ -72,6 +92,12 @@ async function fetchSessionDetail(id: string): Promise<SessionDetailData | null>
 
 async function fetchSharedSession(shareToken: string): Promise<SessionDetailData | null> {
   const res = await fetch(`/api/s/${encodeURIComponent(shareToken)}`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
+async function fetchAnnotations(sessionId: string): Promise<AnnotationsData | null> {
+  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/annotations`);
   if (!res.ok) return null;
   return res.json();
 }
@@ -169,8 +195,8 @@ function attachSessionDetailHandlers(sessionId: string) {
     });
   });
 
-  // Initialize diff rendering
-  initializeDiffs();
+  // Initialize diff rendering with annotations
+  initializeDiffs(sessionId);
 
   // Initialize code block syntax highlighting
   initializeCodeBlocks();
@@ -274,7 +300,7 @@ function attachBlockHandlers() {
 }
 
 // Track FileDiff instances for cleanup
-const diffInstances: FileDiff[] = [];
+const diffInstances: FileDiff<AnnotationMetadata>[] = [];
 
 // Track File instances for cleanup
 const fileInstances: File[] = [];
@@ -282,11 +308,71 @@ const fileInstances: File[] = [];
 // Track rendered diffs to avoid re-rendering
 const renderedDiffs = new Set<string>();
 
-function initializeDiffs() {
+// Annotation type config
+const annotationConfig: Record<AnnotationType, { label: string; badgeClass: string }> = {
+  suggestion: { label: "suggestion", badgeClass: "bg-accent-primary/20 text-accent-primary" },
+  issue: { label: "issue", badgeClass: "bg-diff-del/20 text-diff-del" },
+  praise: { label: "good", badgeClass: "bg-diff-add/20 text-diff-add" },
+  question: { label: "question", badgeClass: "bg-accent-secondary/20 text-accent-secondary" },
+};
+
+// Create annotation element for @pierre/diffs
+function createAnnotationElement(metadata: AnnotationMetadata): HTMLElement {
+  const config = annotationConfig[metadata.type] || annotationConfig.suggestion;
+  const locationText = `${metadata.filename}:${metadata.lineNumber}`;
+  const copyText = `${locationText}\n\n${metadata.content}`;
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "bg-bg-tertiary border border-bg-elevated rounded-lg p-4 my-3 mx-4";
+
+  wrapper.innerHTML = `
+    <div class="flex items-center gap-3 mb-3">
+      <div class="w-8 h-8 rounded-full bg-gradient-to-br from-accent-secondary to-accent-primary flex items-center justify-center text-white text-sm font-semibold shrink-0">C</div>
+      <span class="font-semibold text-text-primary">Claude</span>
+      <span class="text-xs text-text-muted font-mono">${escapeHtml(locationText)}</span>
+      <div class="ml-auto flex items-center gap-2">
+        <span class="px-2 py-0.5 rounded text-xs font-medium ${config.badgeClass}">${config.label}</span>
+        <button class="flex items-center gap-1.5 px-2 py-1 text-xs text-text-muted hover:text-text-primary hover:bg-bg-elevated rounded transition-colors copy-btn">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+          copy prompt
+        </button>
+      </div>
+    </div>
+    <p class="text-[15px] text-text-primary leading-relaxed font-sans">${escapeHtml(metadata.content)}</p>
+  `;
+
+  // Add copy handler
+  const copyBtn = wrapper.querySelector(".copy-btn") as HTMLButtonElement | null;
+  copyBtn?.addEventListener("click", async () => {
+    const originalHtml = copyBtn.innerHTML;
+    await window.copyToClipboard(copyText);
+    copyBtn.innerHTML = `
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+      </svg>
+      copied!
+    `;
+    setTimeout(() => {
+      copyBtn.innerHTML = originalHtml;
+    }, 1500);
+  });
+
+  return wrapper;
+}
+
+// Store annotations data for use in renderDiffContent
+let currentAnnotationsData: AnnotationsData | null = null;
+
+async function initializeDiffs(sessionId: string) {
   // Clean up previous instances
   diffInstances.forEach((instance) => instance.cleanUp());
   diffInstances.length = 0;
   renderedDiffs.clear();
+
+  // Fetch annotations for this session
+  currentAnnotationsData = await fetchAnnotations(sessionId);
 
   // Render only non-collapsed diffs initially (lazy loading for collapsed ones)
   document.querySelectorAll("[data-diff-content]").forEach((el) => {
@@ -308,6 +394,9 @@ function initializeDiffs() {
 function renderDiffContent(container: HTMLElement): boolean {
   const diffContent = container.dataset.diffContent;
   const containerId = container.id;
+  const filename = container.dataset.filename || "file";
+  const diffIdStr = container.dataset.diffId;
+  const diffId = diffIdStr ? parseInt(diffIdStr, 10) : null;
 
   if (!diffContent) {
     container.innerHTML = '<div class="p-4 text-text-muted text-sm">No diff content</div>';
@@ -323,14 +412,34 @@ function renderDiffContent(container: HTMLElement): boolean {
     // Parse the patch to get FileDiffMetadata
     const fileDiff = getSingularPatch(diffContent);
 
+    // Get annotations for this diff
+    const annotationsByDiff = currentAnnotationsData?.annotations_by_diff || {};
+    const reviewModel = currentAnnotationsData?.review?.model || null;
+    const annotations = diffId ? (annotationsByDiff[diffId] || []) : [];
+
+    // Convert to @pierre/diffs format
+    const lineAnnotations: DiffLineAnnotation<AnnotationMetadata>[] = annotations.map((a) => ({
+      side: a.side as "additions" | "deletions",
+      lineNumber: a.line_number,
+      metadata: {
+        id: a.id,
+        type: a.annotation_type,
+        content: a.content,
+        model: reviewModel,
+        filename,
+        lineNumber: a.line_number,
+      },
+    }));
+
     // Create FileDiff instance with options
-    const diffInstance = new FileDiff({
+    const diffInstance = new FileDiff<AnnotationMetadata>({
       theme: { dark: "pierre-dark", light: "pierre-light" },
       themeType: "dark",
       diffStyle: "unified",
       diffIndicators: "classic",
       disableFileHeader: true,
       overflow: "scroll",
+      renderAnnotation: (annotation) => createAnnotationElement(annotation.metadata),
     });
 
     // Create a container element
@@ -338,10 +447,11 @@ function renderDiffContent(container: HTMLElement): boolean {
     container.innerHTML = "";
     container.appendChild(diffContainer);
 
-    // Render the diff
+    // Render the diff with annotations
     diffInstance.render({
       fileDiff,
       fileContainer: diffContainer,
+      lineAnnotations,
     });
 
     diffInstances.push(diffInstance);
