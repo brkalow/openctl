@@ -5,20 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claude Session Archive</title>
   <link rel="stylesheet" href="../src/styles/main.css">
-</head>
-<body class="min-h-screen bg-bg-primary text-text-primary">
+<body class="min-h-screen bg-bg-primary text-text-primary flex flex-col">
   <header class="sticky top-0 z-50 bg-bg-secondary/95 backdrop-blur-sm border-b border-bg-elevated">
-    <nav class="max-w-6xl mx-auto px-4 flex items-center justify-between h-12">
-      <a href="/" class="text-sm font-medium text-text-primary hover:text-accent-primary transition-colors">
+    <nav class="max-w-[1800px] mx-auto px-6 lg:px-10 flex items-center justify-between h-14">
+      <a href="/" class="text-sm font-medium text-text-primary hover:text-accent-primary transition-colors tracking-wide uppercase">
         Session Archive
       </a>
     </nav>
   </header>
 
-  <main class="max-w-6xl mx-auto px-4 py-6">
-    <div id="app"></div>
+  <main id="main-content" class="flex-1">
+    <div id="app" class="h-full"></div>
   </main>
 
-  <script type="module" src="../src/client/index.ts"></script>
+  <script type="text/javascript" src="../src/client/index.ts"></script>
 </body>
 </html>

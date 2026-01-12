@@ -38,7 +38,7 @@ When you learn something new about the architecture or high-level product vision
 
 ## Implementing
 
-When implementing, prefer smaller implementation chunks broken into commits.
+When implementing, prefer smaller implementation chunks broken into commits. When asked to implement a plan, create a new branch.
 
 ## Tech Stack
 

@@ -60,6 +60,9 @@ export function initializeDatabase(dbPath: string = "sessions.db"): Database {
   safeAddColumn(db, "diffs", "additions", "INTEGER DEFAULT 0");
   safeAddColumn(db, "diffs", "deletions", "INTEGER DEFAULT 0");
   safeAddColumn(db, "diffs", "is_session_relevant", "INTEGER DEFAULT 1");
+  safeAddColumn(db, "sessions", "model", "TEXT");
+  safeAddColumn(db, "sessions", "harness", "TEXT");
+  safeAddColumn(db, "sessions", "repo_url", "TEXT");
 
   return db;
 }
@@ -72,6 +75,9 @@ export type Session = {
   pr_url: string | null;
   share_token: string | null;
   project_path: string | null;
+  model: string | null;
+  harness: string | null;
+  repo_url: string | null;
   created_at: string;
   updated_at: string;
 };

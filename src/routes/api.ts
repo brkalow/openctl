@@ -165,6 +165,9 @@ export function createApiRoutes(repo: SessionRepository) {
             pr_url: prUrl || null,
             share_token: null,
             project_path: (formData.get("project_path") as string) || null,
+            model: (formData.get("model") as string) || null,
+            harness: (formData.get("harness") as string) || null,
+            repo_url: (formData.get("repo_url") as string) || null,
           },
           messages,
           diffs
@@ -206,6 +209,9 @@ export function createApiRoutes(repo: SessionRepository) {
           claude_session_id: (formData.get("claude_session_id") as string) || null,
           pr_url: prUrl || null,
           project_path: (formData.get("project_path") as string) || null,
+          model: (formData.get("model") as string) || null,
+          harness: (formData.get("harness") as string) || null,
+          repo_url: (formData.get("repo_url") as string) || null,
         });
 
         // Process session data

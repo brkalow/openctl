@@ -21,8 +21,8 @@ export class SessionRepository {
     // Initialize cached prepared statements
     this.stmts = {
       createSession: db.prepare(`
-        INSERT INTO sessions (id, title, description, claude_session_id, pr_url, share_token, project_path)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO sessions (id, title, description, claude_session_id, pr_url, share_token, project_path, model, harness, repo_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING *
       `),
       getSession: db.prepare("SELECT * FROM sessions WHERE id = ?"),
@@ -52,7 +52,10 @@ export class SessionRepository {
       session.claude_session_id,
       session.pr_url,
       session.share_token,
-      session.project_path
+      session.project_path,
+      session.model,
+      session.harness,
+      session.repo_url
     ) as Session;
   }
 
@@ -70,7 +73,10 @@ export class SessionRepository {
         session.claude_session_id,
         session.pr_url,
         session.share_token,
-        session.project_path
+        session.project_path,
+        session.model,
+        session.harness,
+        session.repo_url
       ) as Session;
 
       for (const msg of messages) {
@@ -129,6 +135,18 @@ export class SessionRepository {
     if (updates.project_path !== undefined) {
       fields.push("project_path = ?");
       values.push(updates.project_path);
+    }
+    if (updates.model !== undefined) {
+      fields.push("model = ?");
+      values.push(updates.model);
+    }
+    if (updates.harness !== undefined) {
+      fields.push("harness = ?");
+      values.push(updates.harness);
+    }
+    if (updates.repo_url !== undefined) {
+      fields.push("repo_url = ?");
+      values.push(updates.repo_url);
     }
 
     if (fields.length === 0) return this.getSession(id);
