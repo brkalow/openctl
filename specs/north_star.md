@@ -2,7 +2,7 @@
 
 ## Vision
 
-A platform for sharing, reviewing, and eventually interacting with Claude Code sessions.
+A platform for sharing, reviewing, and eventually interacting with coding agent sessions.
 
 ## Current Focus
 
@@ -27,7 +27,7 @@ A platform for sharing, reviewing, and eventually interacting with Claude Code s
 
 ### Phase 3: Interactive Feedback
 - In-the-loop review: provide feedback on diffs within the UI
-- Feedback triggers new Claude Code sessions
+- Feedback triggers new agent sessions
 - Could be live interaction with running instances or sandboxed agents
 
 ## Design Principles
