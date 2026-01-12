@@ -312,16 +312,26 @@ function renderFooter(resumeCommand: string, shareUrl: string | null): string {
 
 function renderConversationPanel(messages: Message[]): string {
   // Conversation panel: sticky sidebar on left, fixed height with internal scroll
+  // Render messages with gap tracking based on actually rendered messages
+  let prevRenderedRole: string | null = null;
+  const renderedMessages: string[] = [];
+
+  for (let idx = 0; idx < messages.length; idx++) {
+    const result = renderMessageBlock(messages[idx], messages, idx, prevRenderedRole);
+    if (result) {
+      renderedMessages.push(result);
+      prevRenderedRole = messages[idx].role;
+    }
+  }
+
   return `
-    <div class="min-w-0 lg:sticky lg:top-[calc(3.5rem+1.5rem)] lg:self-start">
+    <div class="min-w-0 lg:sticky lg:top-[calc(3.5rem+1.5rem)] lg:self-start" style="height: calc(100vh - 10rem);">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-sm font-semibold text-text-primary">Conversation</h2>
         <span class="text-xs text-text-muted tabular-nums">${messages.length} messages</span>
       </div>
-      <div class="flex flex-col bg-bg-secondary border border-bg-elevated rounded-lg overflow-hidden" style="height: calc(100vh - 12rem);">
-        <div class="flex-1 overflow-y-auto divide-y divide-bg-elevated">
-          ${messages.map((msg, idx) => renderMessageBlock(msg, messages, idx)).join("")}
-        </div>
+      <div class="flex-1 overflow-y-auto flex flex-col" style="height: calc(100% - 2rem);">
+        ${renderedMessages.join("")}
       </div>
     </div>
   `;
@@ -344,17 +354,17 @@ function renderDiffPanel(diffs: Diff[]): string {
 
 // Message role icons
 const messageIcons = {
-  user: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>`,
-  assistant: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M13.827 3.52h3.603L24 20h-3.603l-6.57-16.48zm-7.258 0h3.767L16.906 20h-3.674l-1.343-3.461H5.017L3.592 20H0l6.569-16.48zm2.327 5.14l-2.36 6.076h4.873l-2.513-6.077z"/></svg>`,
-  system: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>`,
+  user: `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>`,
+  assistant: `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M13.827 3.52h3.603L24 20h-3.603l-6.57-16.48zm-7.258 0h3.767L16.906 20h-3.674l-1.343-3.461H5.017L3.592 20H0l6.569-16.48zm2.327 5.14l-2.36 6.076h4.873l-2.513-6.077z"/></svg>`,
+  system: `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>`,
 };
 
-function renderMessageBlock(message: Message, allMessages: Message[], index: number): string {
+function renderMessageBlock(message: Message, allMessages: Message[], index: number, prevRenderedRole: string | null): string {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const roleLabel = isUser ? "You" : isSystem ? "System" : "Claude";
-  const bgClass = isUser ? "" : isSystem ? "bg-bg-elevated" : "bg-bg-tertiary";
   const roleColor = isUser ? "text-role-user" : isSystem ? "text-text-muted" : "text-role-assistant";
+  const borderColor = isUser ? "border-role-user" : isSystem ? "border-text-muted" : "border-role-assistant";
   const icon = isUser ? messageIcons.user : isSystem ? messageIcons.system : messageIcons.assistant;
 
   // Build tool result map from this and next messages
@@ -369,24 +379,31 @@ function renderMessageBlock(message: Message, allMessages: Message[], index: num
   // Skip rendering if content is empty (e.g., all system tags stripped)
   if (!content.trim()) return "";
 
-  return `
-    <div class="message px-4 py-4 ${bgClass} group relative" data-message-index="${message.message_index}">
-      <div class="flex items-center justify-between mb-2">
-        <div class="flex items-center gap-2">
+  // Add gap and show actor when role changes (based on previous *rendered* message)
+  const actorChanged = prevRenderedRole === null || prevRenderedRole !== message.role;
+  const gapClass = prevRenderedRole !== null && actorChanged ? "mt-2" : "";
+
+  // Only show actor header when role changes
+  const actorHeader = actorChanged ? `
+      <div class="flex items-center justify-between mb-0.5">
+        <div class="flex items-center gap-1.5">
           <span class="${roleColor}">${icon}</span>
-          <span class="text-[11px] font-semibold uppercase tracking-wider ${roleColor}">
+          <span class="text-[10px] font-semibold uppercase tracking-wide ${roleColor}">
             ${roleLabel}
           </span>
         </div>
-        <button class="copy-message p-1 text-text-muted hover:text-text-primary opacity-0 group-hover:opacity-100 transition-opacity"
+        <button class="copy-message p-0.5 text-text-muted hover:text-text-primary opacity-0 group-hover:opacity-100 transition-opacity"
                 title="Copy message">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
           </svg>
         </button>
-      </div>
-      <div class="text-sm text-text-primary leading-relaxed">
+      </div>` : "";
+
+  return `
+    <div class="message py-1 pl-4 pr-3 border-l-2 ${borderColor} ${gapClass} group relative" data-message-index="${message.message_index}">${actorHeader}
+      <div class="text-sm text-text-primary leading-snug flex flex-col gap-0.5">
         ${content}
       </div>
     </div>

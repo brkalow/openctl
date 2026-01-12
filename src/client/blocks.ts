@@ -10,6 +10,77 @@ import type {
 // Map of tool_use_id to tool_result for inline rendering
 type ToolResultMap = Map<string, ToolResultBlock>;
 
+// Tool-specific icons
+const toolIcons = {
+  // Brain icon for thinking
+  thinking: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>`,
+
+  // File icon for Read tool
+  file: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>`,
+
+  // Edit/pencil icon for Edit/Write tools
+  edit: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>`,
+
+  // Checkbox/list icon for TodoWrite
+  todo: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>`,
+
+  // Gear icon for MCP tools
+  gear: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>`,
+
+  // Terminal icon for Bash
+  terminal: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>`,
+
+  // Search icon for Glob/Grep
+  search: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>`,
+
+  // Globe icon for WebFetch/WebSearch
+  web: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg>`,
+
+  // Task/subtask icon
+  task: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>`,
+
+  // Question mark icon for AskUserQuestion
+  question: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`,
+
+  // Default wrench icon
+  default: `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>`,
+};
+
+// Get the appropriate icon for a tool
+function getToolIcon(toolName: string): string {
+  // MCP tools get gear icon
+  if (toolName.startsWith("mcp__")) {
+    return toolIcons.gear;
+  }
+
+  switch (toolName) {
+    case "Read":
+      return toolIcons.file;
+    case "Edit":
+    case "Write":
+    case "NotebookEdit":
+      return toolIcons.edit;
+    case "TodoWrite":
+      return toolIcons.todo;
+    case "Bash":
+    case "KillShell":
+      return toolIcons.terminal;
+    case "Glob":
+    case "Grep":
+      return toolIcons.search;
+    case "WebFetch":
+    case "WebSearch":
+      return toolIcons.web;
+    case "Task":
+    case "TaskOutput":
+      return toolIcons.task;
+    case "AskUserQuestion":
+      return toolIcons.question;
+    default:
+      return toolIcons.default;
+  }
+}
+
 // HTML escaping utility
 export function escapeHtml(str: string): string {
   const htmlEscapes: Record<string, string> = {
@@ -153,16 +224,18 @@ function renderGenericToolBlock(
   const fullPath = getFullPathFromTool(block);
   const status = getToolStatus(result);
   const blockId = `tool-${block.id}`;
+  const icon = getToolIcon(block.name);
 
   return `
-    <div class="tool-block my-2 min-w-0" data-tool-id="${escapeHtml(block.id)}">
-      <button class="tool-header flex items-center gap-2 w-full min-w-0 text-left px-2 py-1.5 rounded hover:bg-bg-elevated transition-colors"
+    <div class="tool-block min-w-0" data-tool-id="${escapeHtml(block.id)}">
+      <button class="tool-header flex items-center gap-1.5 pr-1.5 py-0.5 -ml-0.5 rounded hover:bg-bg-elevated transition-colors"
               data-toggle-tool="${blockId}"
               ${fullPath ? `title="${escapeHtml(fullPath)}"` : ""}>
-        <span class="toggle-icon text-text-muted text-xs shrink-0">&#9654;</span>
-        <span class="font-semibold text-accent-primary shrink-0">${escapeHtml(block.name)}</span>
-        <span class="font-mono text-sm text-text-muted truncate min-w-0">${escapeHtml(summary)}</span>
-        <span class="shrink-0">${status}</span>
+        <span class="text-accent-primary">${icon}</span>
+        <span class="font-medium text-accent-primary">${escapeHtml(block.name)}</span>
+        <span class="font-mono text-[13px] text-text-muted">${escapeHtml(summary)}</span>
+        ${status}
+        <span class="toggle-icon text-text-muted text-[10px]">&#9654;</span>
       </button>
       <div id="${blockId}" class="tool-content hidden pl-6 mt-1">
         ${fullPath && fullPath !== summary ? `<div class="text-xs text-text-muted font-mono mb-2 break-all">${escapeHtml(fullPath)}</div>` : ""}
@@ -351,22 +424,22 @@ function renderAskUserQuestion(
   }
 
   return `
-    <div class="bg-bg-tertiary/50 rounded-lg p-3 my-2">
-      <div class="flex items-center gap-2 text-sm font-medium mb-2">
-        <span>&#10067;</span>
+    <div class="bg-bg-tertiary/30 rounded py-1.5 pr-2 -ml-1 pl-1">
+      <div class="flex items-center gap-1.5 text-[13px] font-medium mb-1">
+        <span class="text-accent-primary">${toolIcons.question}</span>
         <span>Question</span>
       </div>
       ${questions
         .map(
           (q, i) => `
-        <div class="mb-2">
-          <div class="text-sm text-text-primary">${escapeHtml(q.question)}</div>
+        <div class="mb-1 last:mb-0 pl-5">
+          <div class="text-[13px] text-text-primary">${escapeHtml(q.question)}</div>
           ${
             answers[i]
               ? `
-            <div class="flex items-center gap-1 mt-1">
-              <span class="text-accent-primary">&#8594;</span>
-              <span class="text-sm font-medium">${escapeHtml(String(answers[i]))}</span>
+            <div class="flex items-center gap-1 mt-0.5">
+              <span class="text-accent-primary text-xs">&#8594;</span>
+              <span class="text-[13px] font-medium">${escapeHtml(String(answers[i]))}</span>
             </div>
           `
               : ""
@@ -397,16 +470,16 @@ function renderTodoWrite(block: ToolUseBlock): string {
   };
 
   return `
-    <div class="bg-bg-tertiary/50 rounded-lg p-3 my-2">
-      <div class="flex items-center gap-2 text-sm font-medium mb-2">
-        <span>&#128203;</span>
+    <div class="bg-bg-tertiary/30 rounded py-1.5 pr-2 -ml-1 pl-1">
+      <div class="flex items-center gap-1.5 text-[13px] font-medium mb-1">
+        <span class="text-accent-primary">${toolIcons.todo}</span>
         <span>Tasks</span>
       </div>
-      <div class="space-y-1">
+      <div class="space-y-0.5 pl-5">
         ${todos
           .map(
             (todo) => `
-          <div class="flex items-center gap-2 text-sm">
+          <div class="flex items-center gap-1.5 text-[13px]">
             ${statusIcon(todo.status)}
             <span class="${todo.status === "completed" ? "text-text-muted line-through" : ""}">${escapeHtml(todo.content)}</span>
           </div>
@@ -428,15 +501,16 @@ function renderTaskBlock(
   const blockId = `task-${block.id}`;
 
   return `
-    <div class="tool-block my-2 border-l-2 border-bg-elevated pl-3">
-      <button class="tool-header flex items-center gap-2 w-full text-left py-1"
+    <div class="tool-block border-l-2 border-bg-elevated ml-4">
+      <button class="tool-header flex items-center gap-1.5 py-0.5 pl-2 pr-1.5 rounded hover:bg-bg-elevated transition-colors"
               data-toggle-tool="${blockId}">
-        <span class="toggle-icon text-text-muted text-xs">&#9654;</span>
-        <span class="font-semibold text-accent-primary">Task</span>
-        <span class="text-sm text-text-muted truncate flex-1">${escapeHtml(description.slice(0, 50))}</span>
+        <span class="text-accent-primary">${toolIcons.task}</span>
+        <span class="font-medium text-accent-primary text-[13px]">Task</span>
+        <span class="text-[13px] text-text-muted">${escapeHtml(description.slice(0, 50))}</span>
         ${status}
+        <span class="toggle-icon text-text-muted text-[10px]">&#9654;</span>
       </button>
-      <div id="${blockId}" class="task-content hidden mt-2">
+      <div id="${blockId}" class="task-content hidden mt-1 pl-2">
         ${
           result
             ? `
@@ -459,14 +533,15 @@ function renderThinkingBlock(block: ThinkingBlock): string {
   const blockId = `thinking-${Math.random().toString(36).slice(2, 10)}`;
 
   return `
-    <div class="thinking-block my-2">
-      <button class="flex items-center gap-2 text-text-muted italic text-sm hover:text-text-secondary"
+    <div class="thinking-block">
+      <button class="flex items-center gap-1.5 text-text-muted text-[13px] hover:text-text-secondary pr-1.5 py-0.5 -ml-0.5 rounded hover:bg-bg-elevated transition-colors"
               data-toggle-tool="${blockId}">
-        <span class="toggle-icon text-xs">&#9654;</span>
-        <span>Thinking</span>
-        <span class="text-xs">${duration}</span>
+        <span class="shrink-0">${toolIcons.thinking}</span>
+        <span class="italic">Thinking</span>
+        <span class="text-xs opacity-60">${duration}</span>
+        <span class="toggle-icon text-[10px]">&#9654;</span>
       </button>
-      <div id="${blockId}" class="hidden mt-2 pl-4 text-sm text-text-secondary">
+      <div id="${blockId}" class="hidden mt-1 pl-5 text-[13px] text-text-secondary leading-snug">
         ${escapeHtml(block.thinking)}
       </div>
     </div>
@@ -476,7 +551,7 @@ function renderThinkingBlock(block: ThinkingBlock): string {
 function renderImageBlock(block: ImageBlock): string {
   const label = block.filename || "Image";
   return `
-    <div class="inline-block bg-bg-tertiary rounded px-2 py-1 my-1">
+    <div class="inline-block bg-bg-tertiary rounded px-2 py-1">
       <span class="text-sm text-text-muted font-mono">[Image: ${escapeHtml(label)}]</span>
     </div>
   `;
@@ -485,7 +560,7 @@ function renderImageBlock(block: ImageBlock): string {
 function renderFileBlock(block: FileBlock): string {
   const size = block.size ? ` (${formatBytes(block.size)})` : "";
   return `
-    <div class="inline-block bg-bg-tertiary rounded px-2 py-1 my-1">
+    <div class="inline-block bg-bg-tertiary rounded px-2 py-1">
       <span class="text-sm text-text-muted font-mono">[File: ${escapeHtml(block.filename)}${size}]</span>
     </div>
   `;
