@@ -2,7 +2,8 @@ import { Router } from "./router";
 import { renderSessionList, renderSessionDetail, renderNotFound } from "./views";
 import type { Session, Message, Diff } from "../db/schema";
 // Import @pierre/diffs - this registers the web component and provides FileDiff class
-import { FileDiff, getSingularPatch } from "@pierre/diffs";
+import { FileDiff, getSingularPatch, File } from "@pierre/diffs";
+import type { SupportedLanguages } from "@pierre/diffs";
 
 // Initialize router
 const router = new Router();
@@ -170,10 +171,113 @@ function attachSessionDetailHandlers(sessionId: string) {
 
   // Initialize diff rendering
   initializeDiffs();
+
+  // Initialize code block syntax highlighting
+  initializeCodeBlocks();
+
+  // Attach block interaction handlers
+  attachBlockHandlers();
+}
+
+function attachBlockHandlers() {
+  // Tool/thinking block collapse/expand toggle
+  document.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    const toggleBtn = target.closest("[data-toggle-tool]") as HTMLElement;
+
+    if (toggleBtn) {
+      const contentId = toggleBtn.dataset.toggleTool;
+      const content = document.getElementById(contentId!);
+      const icon = toggleBtn.querySelector(".toggle-icon");
+
+      if (content && icon) {
+        const isHidden = content.classList.contains("hidden");
+        content.classList.toggle("hidden");
+        // Toggle between right-pointing (collapsed) and down-pointing (expanded) triangles
+        icon.innerHTML = isHidden ? "&#9660;" : "&#9654;";
+      }
+    }
+  });
+
+  // Copy message handler
+  document.addEventListener("click", async (e) => {
+    const target = e.target as HTMLElement;
+    const copyBtn = target.closest(".copy-message") as HTMLElement;
+
+    if (copyBtn) {
+      const message = copyBtn.closest(".message");
+      if (message) {
+        // Get text content only (from text-block elements, exclude tool blocks)
+        const textBlocks = message.querySelectorAll(".text-block");
+        const text = Array.from(textBlocks)
+          .map((b) => b.textContent)
+          .join("\n")
+          .trim();
+
+        if (text) {
+          await window.copyToClipboard(text);
+          copyBtn.classList.add("text-diff-add");
+          setTimeout(() => copyBtn.classList.remove("text-diff-add"), 1000);
+        }
+      }
+    }
+  });
+
+  // Copy code block handler
+  document.addEventListener("click", async (e) => {
+    const target = e.target as HTMLElement;
+    const copyBtn = target.closest(".copy-code") as HTMLElement;
+
+    if (copyBtn) {
+      const pre = copyBtn.closest("pre");
+      const code = pre?.querySelector("code");
+      if (code) {
+        await window.copyToClipboard(code.textContent || "");
+        copyBtn.classList.add("text-diff-add");
+        setTimeout(() => copyBtn.classList.remove("text-diff-add"), 1000);
+      }
+    }
+  });
+
+  // Copy tool result handler
+  document.addEventListener("click", async (e) => {
+    const target = e.target as HTMLElement;
+    const copyBtn = target.closest("[data-copy-result]") as HTMLElement;
+
+    if (copyBtn) {
+      const resultId = copyBtn.dataset.copyResult;
+      const resultEl = document.getElementById(resultId!);
+      if (resultEl) {
+        await window.copyToClipboard(resultEl.textContent || "");
+        copyBtn.classList.add("text-diff-add");
+        setTimeout(() => copyBtn.classList.remove("text-diff-add"), 1000);
+      }
+    }
+  });
+
+  // Show all result handler
+  document.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    const showAllBtn = target.closest("[data-show-all-result]") as HTMLElement;
+
+    if (showAllBtn) {
+      const resultId = showAllBtn.dataset.showAllResult;
+      const fullContent = showAllBtn.dataset.fullContent;
+      const resultEl = document.getElementById(resultId!);
+
+      if (resultEl && fullContent) {
+        resultEl.textContent = fullContent;
+        showAllBtn.remove();
+      }
+    }
+  });
 }
 
 // Track FileDiff instances for cleanup
 const diffInstances: FileDiff[] = [];
+
+// Track File instances for cleanup
+const fileInstances: File[] = [];
 
 // Track rendered diffs to avoid re-rendering
 const renderedDiffs = new Set<string>();
@@ -338,6 +442,77 @@ function attachDiffToggleHandlers() {
       if (rawDiff) {
         rawDiff.classList.toggle("hidden");
         target.textContent = rawDiff.classList.contains("hidden") ? "Show raw diff" : "Hide raw diff";
+      }
+    }
+  });
+}
+
+function initializeCodeBlocks() {
+  // Clean up previous instances
+  fileInstances.forEach((instance) => instance.cleanUp());
+  fileInstances.length = 0;
+
+  document.querySelectorAll("[data-code-content]").forEach((el) => {
+    const htmlEl = el as HTMLElement;
+    const encodedContent = htmlEl.dataset.codeContent;
+    const language = htmlEl.dataset.language || "";
+
+    if (encodedContent) {
+      try {
+        // Decode base64-encoded content
+        const code = decodeURIComponent(atob(encodedContent));
+
+        // Create File instance with options matching diff styling
+        const fileInstance = new File({
+          theme: { dark: "pierre-dark", light: "pierre-light" },
+          themeType: "dark",
+          overflow: "scroll",
+          disableFileHeader: true,
+        });
+
+        // Create a container element for the highlighted code
+        const container = document.createElement("diffs-container");
+
+        // Check if this is a tool result content (has .tool-result-content class)
+        const isToolResult = htmlEl.classList.contains("tool-result-content");
+
+        // Preserve the copy button (different class for tool results vs code blocks)
+        const copyBtn = htmlEl.querySelector(".copy-code");
+
+        // For tool results, we need to preserve the pre element's id for copy functionality
+        const preEl = htmlEl.querySelector("pre");
+        const preId = preEl?.id;
+
+        htmlEl.innerHTML = "";
+        htmlEl.appendChild(container);
+
+        // Re-add the copy button if it existed (for markdown code blocks)
+        if (copyBtn) {
+          container.appendChild(copyBtn);
+        }
+
+        // Render the highlighted code
+        fileInstance.render({
+          file: {
+            name: "code",
+            contents: code,
+            lang: language as SupportedLanguages || undefined,
+          },
+          fileContainer: container,
+        });
+
+        // For tool results, add an id to the rendered content for copy functionality
+        if (isToolResult && preId) {
+          const renderedPre = container.querySelector("pre");
+          if (renderedPre) {
+            renderedPre.id = preId;
+          }
+        }
+
+        fileInstances.push(fileInstance);
+      } catch (err) {
+        console.error("Failed to render code block:", err);
+        // Leave the fallback content in place
       }
     }
   });
