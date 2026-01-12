@@ -1,5 +1,5 @@
 import { SessionRepository } from "../db/repository";
-import type { Message, Diff, ContentBlock, ToolUseBlock, ToolResultBlock, ImageBlock } from "../db/schema";
+import type { Message, Diff, ContentBlock, ToolUseBlock, ToolResultBlock, ImageBlock, AnnotationType } from "../db/schema";
 
 // JSON response helper
 function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
@@ -89,13 +89,14 @@ export function createApiRoutes(repo: SessionRepository) {
 
       const messages = repo.getMessages(sessionId);
       const diffs = repo.getDiffs(sessionId);
+      const review = repo.getReviewWithCount(sessionId);
 
       let shareUrl: string | null = null;
       if (session.share_token && baseUrl) {
         shareUrl = `${baseUrl}/s/${session.share_token}`;
       }
 
-      return json({ session, messages, diffs, shareUrl });
+      return json({ session, messages, diffs, shareUrl, review });
     },
 
     // Get shared session detail
@@ -107,10 +108,11 @@ export function createApiRoutes(repo: SessionRepository) {
 
       const messages = repo.getMessages(session.id);
       const diffs = repo.getDiffs(session.id);
+      const review = repo.getReviewWithCount(session.id);
 
       const shareUrl = baseUrl ? `${baseUrl}/s/${session.share_token}` : null;
 
-      return json({ session, messages, diffs, shareUrl });
+      return json({ session, messages, diffs, shareUrl, review });
     },
 
     // Create session
@@ -155,8 +157,49 @@ export function createApiRoutes(repo: SessionRepository) {
           diffs = parseDiffData(diffData, id, touchedFiles);
         }
 
+        // Parse review data if provided
+        const reviewSummary = formData.get("review_summary") as string;
+        const reviewModel = formData.get("review_model") as string;
+        const annotationsJson = formData.get("annotations") as string;
+
+        let reviewData: {
+          summary: string;
+          model?: string;
+          annotations: Array<{
+            filename: string;
+            line_number: number;
+            side: "additions" | "deletions";
+            annotation_type: AnnotationType;
+            content: string;
+          }>;
+        } | undefined;
+
+        if (reviewSummary) {
+          let annotations: Array<{
+            filename: string;
+            line_number: number;
+            side: "additions" | "deletions";
+            annotation_type: AnnotationType;
+            content: string;
+          }> = [];
+
+          if (annotationsJson) {
+            try {
+              annotations = JSON.parse(annotationsJson);
+            } catch {
+              console.error("Failed to parse annotations JSON");
+            }
+          }
+
+          reviewData = {
+            summary: reviewSummary,
+            model: reviewModel || undefined,
+            annotations,
+          };
+        }
+
         // Create session with all data in a transaction
-        repo.createSessionWithData(
+        repo.createSessionWithDataAndReview(
           {
             id,
             title,
@@ -170,7 +213,8 @@ export function createApiRoutes(repo: SessionRepository) {
             repo_url: (formData.get("repo_url") as string) || null,
           },
           messages,
-          diffs
+          diffs,
+          reviewData
         );
 
         return new Response(null, {
@@ -306,6 +350,23 @@ export function createApiRoutes(repo: SessionRepository) {
           "Content-Disposition": `attachment; filename="${session.title.replace(/[^a-zA-Z0-9]/g, "_")}.json"`,
         },
       });
+    },
+
+    // Get annotations for a session (for lazy loading in frontend)
+    getAnnotations(sessionId: string): Response {
+      const session = repo.getSession(sessionId);
+      if (!session) {
+        return jsonError("Session not found", 404);
+      }
+
+      const review = repo.getReview(sessionId);
+      if (!review) {
+        return json({ review: null, annotations_by_diff: {} });
+      }
+
+      const annotationsByDiff = repo.getAnnotationsGroupedByDiff(sessionId);
+
+      return json({ review, annotations_by_diff: annotationsByDiff });
     },
   };
 }

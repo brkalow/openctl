@@ -1,8 +1,16 @@
 import { Router } from "./router";
-import { renderSessionList, renderSessionDetail, renderNotFound } from "./views";
-import type { Session, Message, Diff } from "../db/schema";
+import { renderSessionList, renderSessionDetail, renderNotFound, escapeHtml } from "./views";
+import type { Session, Message, Diff, Review, Annotation, AnnotationType } from "../db/schema";
 // Import @pierre/diffs - this registers the web component and provides FileDiff class
-import { FileDiff, getSingularPatch } from "@pierre/diffs";
+import { FileDiff, getSingularPatch, type DiffLineAnnotation } from "@pierre/diffs";
+
+// Annotation metadata for rendering
+interface AnnotationMetadata {
+  id: number;
+  type: AnnotationType;
+  content: string;
+  model: string | null;
+}
 
 // Initialize router
 const router = new Router();
@@ -56,11 +64,21 @@ async function fetchSessions(): Promise<Session[]> {
   return data.sessions || [];
 }
 
+interface ReviewWithCount extends Review {
+  annotation_count: number;
+}
+
 interface SessionDetailData {
   session: Session;
   messages: Message[];
   diffs: Diff[];
   shareUrl: string | null;
+  review?: ReviewWithCount | null;
+}
+
+interface AnnotationsData {
+  review: Review | null;
+  annotations_by_diff: Record<number, Annotation[]>;
 }
 
 async function fetchSessionDetail(id: string): Promise<SessionDetailData | null> {
@@ -71,6 +89,12 @@ async function fetchSessionDetail(id: string): Promise<SessionDetailData | null>
 
 async function fetchSharedSession(shareToken: string): Promise<SessionDetailData | null> {
   const res = await fetch(`/api/s/${encodeURIComponent(shareToken)}`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
+async function fetchAnnotations(sessionId: string): Promise<AnnotationsData | null> {
+  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/annotations`);
   if (!res.ok) return null;
   return res.json();
 }
@@ -168,36 +192,87 @@ function attachSessionDetailHandlers(sessionId: string) {
     });
   });
 
-  // Initialize diff rendering
-  initializeDiffs();
+  // Initialize diff rendering with annotations
+  initializeDiffs(sessionId);
 }
 
 // Track FileDiff instances for cleanup
-const diffInstances: FileDiff[] = [];
+const diffInstances: FileDiff<AnnotationMetadata>[] = [];
 
-function initializeDiffs() {
+// Icon map for annotation types
+function getAnnotationIcon(type: AnnotationType): string {
+  switch (type) {
+    case "suggestion": return "💡";
+    case "issue": return "⚠️";
+    case "praise": return "✓";
+    case "question": return "?";
+    default: return "•";
+  }
+}
+
+// Create annotation element for @pierre/diffs
+function createAnnotationElement(metadata: AnnotationMetadata): HTMLElement {
+  const wrapper = document.createElement("div");
+  wrapper.className = `annotation annotation--${metadata.type}`;
+
+  wrapper.innerHTML = `
+    <div class="annotation__pointer"></div>
+    <div class="annotation__body">
+      <span class="annotation__icon">${getAnnotationIcon(metadata.type)}</span>
+      <span class="annotation__content">${escapeHtml(metadata.content)}</span>
+      ${metadata.model ? `<span class="annotation__meta">${escapeHtml(metadata.model)}</span>` : ""}
+    </div>
+  `;
+
+  return wrapper;
+}
+
+async function initializeDiffs(sessionId: string) {
   // Clean up previous instances
   diffInstances.forEach((instance) => instance.cleanUp());
   diffInstances.length = 0;
+
+  // Fetch annotations for this session
+  const annotationsData = await fetchAnnotations(sessionId);
+  const annotationsByDiff = annotationsData?.annotations_by_diff || {};
+  const reviewModel = annotationsData?.review?.model || null;
 
   document.querySelectorAll("[data-diff-content]").forEach((el) => {
     const htmlEl = el as HTMLElement;
     const content = htmlEl.dataset.diffContent;
     const filename = htmlEl.dataset.filename || "file";
+    const diffIdStr = htmlEl.dataset.diffId;
+    const diffId = diffIdStr ? parseInt(diffIdStr, 10) : null;
 
     if (content) {
       try {
         // Parse the patch to get FileDiffMetadata
         const fileDiff = getSingularPatch(content);
 
-        // Create FileDiff instance with options
-        const diffInstance = new FileDiff({
+        // Get annotations for this diff
+        const annotations = diffId ? (annotationsByDiff[diffId] || []) : [];
+
+        // Convert to @pierre/diffs format
+        const lineAnnotations: DiffLineAnnotation<AnnotationMetadata>[] = annotations.map((a) => ({
+          side: a.side as "additions" | "deletions",
+          lineNumber: a.line_number,
+          metadata: {
+            id: a.id,
+            type: a.annotation_type,
+            content: a.content,
+            model: reviewModel,
+          },
+        }));
+
+        // Create FileDiff instance with annotation rendering
+        const diffInstance = new FileDiff<AnnotationMetadata>({
           theme: { dark: "pierre-dark", light: "pierre-light" },
           themeType: "dark",
           diffStyle: "unified",
           diffIndicators: "classic",
           disableFileHeader: true,
           overflow: "scroll",
+          renderAnnotation: (annotation) => createAnnotationElement(annotation.metadata),
         });
 
         // Create a container element
@@ -205,10 +280,11 @@ function initializeDiffs() {
         htmlEl.innerHTML = "";
         htmlEl.appendChild(container);
 
-        // Render the diff
+        // Render the diff with annotations
         diffInstance.render({
           fileDiff,
           fileContainer: container,
+          lineAnnotations,
         });
 
         diffInstances.push(diffInstance);

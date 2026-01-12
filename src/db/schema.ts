@@ -55,6 +55,37 @@ export function initializeDatabase(dbPath: string = "sessions.db"): Database {
   db.run(`CREATE INDEX IF NOT EXISTS idx_diffs_session ON diffs(session_id)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_share_token ON sessions(share_token)`);
 
+  // Reviews table (one per session, optional)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS reviews (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL UNIQUE,
+      summary TEXT NOT NULL,
+      model TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    )
+  `);
+
+  // Annotations table (line-level review comments)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS annotations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      review_id INTEGER NOT NULL,
+      diff_id INTEGER NOT NULL,
+      line_number INTEGER NOT NULL,
+      side TEXT NOT NULL DEFAULT 'additions',
+      annotation_type TEXT NOT NULL,
+      content TEXT NOT NULL,
+      FOREIGN KEY (review_id) REFERENCES reviews(id) ON DELETE CASCADE,
+      FOREIGN KEY (diff_id) REFERENCES diffs(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`CREATE INDEX IF NOT EXISTS idx_reviews_session ON reviews(session_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_annotations_review ON annotations(review_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_annotations_diff ON annotations(diff_id)`);
+
   // Migrations - add new columns safely
   safeAddColumn(db, "messages", "content_blocks", "TEXT DEFAULT '[]'");
   safeAddColumn(db, "diffs", "additions", "INTEGER DEFAULT 0");
@@ -148,4 +179,25 @@ export type Diff = {
   additions: number; // Pre-computed
   deletions: number; // Pre-computed
   is_session_relevant: boolean; // True if file was touched in conversation
+};
+
+// Code review types
+export type AnnotationType = "suggestion" | "issue" | "praise" | "question";
+
+export type Review = {
+  id: number;
+  session_id: string;
+  summary: string;
+  model: string | null;
+  created_at: string;
+};
+
+export type Annotation = {
+  id: number;
+  review_id: number;
+  diff_id: number;
+  line_number: number;
+  side: "additions" | "deletions";
+  annotation_type: AnnotationType;
+  content: string;
 };
