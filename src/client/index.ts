@@ -2,7 +2,8 @@ import { Router } from "./router";
 import { renderSessionList, renderSessionDetail, renderNotFound, escapeHtml } from "./views";
 import type { Session, Message, Diff, Review, Annotation, AnnotationType } from "../db/schema";
 // Import @pierre/diffs - this registers the web component and provides FileDiff class
-import { FileDiff, getSingularPatch, type DiffLineAnnotation } from "@pierre/diffs";
+import { FileDiff, getSingularPatch, File } from "@pierre/diffs";
+import type { SupportedLanguages, DiffLineAnnotation } from "@pierre/diffs";
 
 // Annotation metadata for rendering
 interface AnnotationMetadata {
@@ -196,10 +197,116 @@ function attachSessionDetailHandlers(sessionId: string) {
 
   // Initialize diff rendering with annotations
   initializeDiffs(sessionId);
+
+  // Initialize code block syntax highlighting
+  initializeCodeBlocks();
+
+  // Attach block interaction handlers
+  attachBlockHandlers();
+}
+
+function attachBlockHandlers() {
+  // Tool/thinking block collapse/expand toggle
+  document.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    const toggleBtn = target.closest("[data-toggle-tool]") as HTMLElement;
+
+    if (toggleBtn) {
+      const contentId = toggleBtn.dataset.toggleTool;
+      const content = document.getElementById(contentId!);
+      const icon = toggleBtn.querySelector(".toggle-icon");
+
+      if (content && icon) {
+        const isHidden = content.classList.contains("hidden");
+        content.classList.toggle("hidden");
+        // Toggle between right-pointing (collapsed) and down-pointing (expanded) triangles
+        icon.innerHTML = isHidden ? "&#9660;" : "&#9654;";
+      }
+    }
+  });
+
+  // Copy message handler
+  document.addEventListener("click", async (e) => {
+    const target = e.target as HTMLElement;
+    const copyBtn = target.closest(".copy-message") as HTMLElement;
+
+    if (copyBtn) {
+      const message = copyBtn.closest(".message");
+      if (message) {
+        // Get text content only (from text-block elements, exclude tool blocks)
+        const textBlocks = message.querySelectorAll(".text-block");
+        const text = Array.from(textBlocks)
+          .map((b) => b.textContent)
+          .join("\n")
+          .trim();
+
+        if (text) {
+          await window.copyToClipboard(text);
+          copyBtn.classList.add("text-diff-add");
+          setTimeout(() => copyBtn.classList.remove("text-diff-add"), 1000);
+        }
+      }
+    }
+  });
+
+  // Copy code block handler
+  document.addEventListener("click", async (e) => {
+    const target = e.target as HTMLElement;
+    const copyBtn = target.closest(".copy-code") as HTMLElement;
+
+    if (copyBtn) {
+      const pre = copyBtn.closest("pre");
+      const code = pre?.querySelector("code");
+      if (code) {
+        await window.copyToClipboard(code.textContent || "");
+        copyBtn.classList.add("text-diff-add");
+        setTimeout(() => copyBtn.classList.remove("text-diff-add"), 1000);
+      }
+    }
+  });
+
+  // Copy tool result handler
+  document.addEventListener("click", async (e) => {
+    const target = e.target as HTMLElement;
+    const copyBtn = target.closest("[data-copy-result]") as HTMLElement;
+
+    if (copyBtn) {
+      const resultId = copyBtn.dataset.copyResult;
+      const resultEl = document.getElementById(resultId!);
+      if (resultEl) {
+        await window.copyToClipboard(resultEl.textContent || "");
+        copyBtn.classList.add("text-diff-add");
+        setTimeout(() => copyBtn.classList.remove("text-diff-add"), 1000);
+      }
+    }
+  });
+
+  // Show all result handler
+  document.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    const showAllBtn = target.closest("[data-show-all-result]") as HTMLElement;
+
+    if (showAllBtn) {
+      const resultId = showAllBtn.dataset.showAllResult;
+      const fullContent = showAllBtn.dataset.fullContent;
+      const resultEl = document.getElementById(resultId!);
+
+      if (resultEl && fullContent) {
+        resultEl.textContent = fullContent;
+        showAllBtn.remove();
+      }
+    }
+  });
 }
 
 // Track FileDiff instances for cleanup
 const diffInstances: FileDiff<AnnotationMetadata>[] = [];
+
+// Track File instances for cleanup
+const fileInstances: File[] = [];
+
+// Track rendered diffs to avoid re-rendering
+const renderedDiffs = new Set<string>();
 
 // Annotation type config
 const annotationConfig: Record<AnnotationType, { label: string; badgeClass: string }> = {
@@ -255,72 +362,267 @@ function createAnnotationElement(metadata: AnnotationMetadata): HTMLElement {
   return wrapper;
 }
 
+// Store annotations data for use in renderDiffContent
+let currentAnnotationsData: AnnotationsData | null = null;
+
 async function initializeDiffs(sessionId: string) {
   // Clean up previous instances
   diffInstances.forEach((instance) => instance.cleanUp());
   diffInstances.length = 0;
+  renderedDiffs.clear();
 
   // Fetch annotations for this session
-  const annotationsData = await fetchAnnotations(sessionId);
-  const annotationsByDiff = annotationsData?.annotations_by_diff || {};
-  const reviewModel = annotationsData?.review?.model || null;
+  currentAnnotationsData = await fetchAnnotations(sessionId);
 
+  // Render only non-collapsed diffs initially (lazy loading for collapsed ones)
   document.querySelectorAll("[data-diff-content]").forEach((el) => {
     const htmlEl = el as HTMLElement;
-    const content = htmlEl.dataset.diffContent;
-    const filename = htmlEl.dataset.filename || "file";
-    const diffIdStr = htmlEl.dataset.diffId;
-    const diffId = diffIdStr ? parseInt(diffIdStr, 10) : null;
+    const needsRender = htmlEl.dataset.needsRender;
 
-    if (content) {
+    // Skip if this diff is collapsed and needs lazy rendering
+    if (needsRender === "true") {
+      return;
+    }
+
+    renderDiffContent(htmlEl);
+  });
+
+  // Attach toggle handlers
+  attachDiffToggleHandlers();
+}
+
+function renderDiffContent(container: HTMLElement): boolean {
+  const diffContent = container.dataset.diffContent;
+  const containerId = container.id;
+  const filename = container.dataset.filename || "file";
+  const diffIdStr = container.dataset.diffId;
+  const diffId = diffIdStr ? parseInt(diffIdStr, 10) : null;
+
+  if (!diffContent) {
+    container.innerHTML = '<div class="p-4 text-text-muted text-sm">No diff content</div>';
+    return false;
+  }
+
+  // Already rendered
+  if (containerId && renderedDiffs.has(containerId)) {
+    return true;
+  }
+
+  try {
+    // Parse the patch to get FileDiffMetadata
+    const fileDiff = getSingularPatch(diffContent);
+
+    // Get annotations for this diff
+    const annotationsByDiff = currentAnnotationsData?.annotations_by_diff || {};
+    const reviewModel = currentAnnotationsData?.review?.model || null;
+    const annotations = diffId ? (annotationsByDiff[diffId] || []) : [];
+
+    // Convert to @pierre/diffs format
+    const lineAnnotations: DiffLineAnnotation<AnnotationMetadata>[] = annotations.map((a) => ({
+      side: a.side as "additions" | "deletions",
+      lineNumber: a.line_number,
+      metadata: {
+        id: a.id,
+        type: a.annotation_type,
+        content: a.content,
+        model: reviewModel,
+        filename,
+        lineNumber: a.line_number,
+      },
+    }));
+
+    // Create FileDiff instance with options
+    const diffInstance = new FileDiff<AnnotationMetadata>({
+      theme: { dark: "pierre-dark", light: "pierre-light" },
+      themeType: "dark",
+      diffStyle: "unified",
+      diffIndicators: "classic",
+      disableFileHeader: true,
+      overflow: "scroll",
+      renderAnnotation: (annotation) => createAnnotationElement(annotation.metadata),
+    });
+
+    // Create a container element
+    const diffContainer = document.createElement("diffs-container");
+    container.innerHTML = "";
+    container.appendChild(diffContainer);
+
+    // Render the diff with annotations
+    diffInstance.render({
+      fileDiff,
+      fileContainer: diffContainer,
+      lineAnnotations,
+    });
+
+    diffInstances.push(diffInstance);
+    if (containerId) {
+      renderedDiffs.add(containerId);
+    }
+    return true;
+  } catch (err) {
+    console.error("Failed to render diff:", err);
+    container.innerHTML = `
+      <div class="p-4">
+        <div class="flex items-center gap-2 text-text-muted mb-2">
+          <span>⚠️</span>
+          <span>Unable to render diff</span>
+        </div>
+        <button class="text-accent-primary text-sm hover:underline" data-show-raw-diff>
+          Show raw diff
+        </button>
+        <pre class="hidden raw-diff mt-2 text-xs font-mono whitespace-pre-wrap bg-bg-primary p-2 rounded overflow-x-auto max-h-96 overflow-y-auto">${escapeHtmlForDiff(diffContent)}</pre>
+      </div>
+    `;
+    return false;
+  }
+}
+
+function escapeHtmlForDiff(str: string): string {
+  const htmlEscapes: Record<string, string> = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  };
+  return str.replace(/[&<>"']/g, (char) => htmlEscapes[char]);
+}
+
+function attachDiffToggleHandlers() {
+  // Individual diff collapse/expand toggle
+  document.querySelectorAll("[data-toggle-diff]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const toggleBtn = e.currentTarget as HTMLElement;
+      const contentId = toggleBtn.dataset.toggleDiff;
+      if (!contentId) return;
+
+      const content = document.getElementById(contentId);
+      const icon = toggleBtn.querySelector(".toggle-icon");
+      const collapseLabel = toggleBtn.querySelector(".collapse-label");
+
+      if (content && icon) {
+        const isHidden = content.classList.contains("hidden");
+        content.classList.toggle("hidden");
+        icon.textContent = isHidden ? "▼" : "▶";
+
+        if (collapseLabel) {
+          collapseLabel.textContent = isHidden ? "Hide" : "Show";
+        }
+
+        // Render diff content if expanding and not yet rendered
+        if (isHidden && content.dataset.needsRender === "true") {
+          renderDiffContent(content);
+          content.dataset.needsRender = "false";
+        }
+      }
+    });
+  });
+
+  // "Other branch changes" section toggle
+  document.querySelectorAll("[data-toggle-other-diffs]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const content = document.getElementById("other-diffs-content");
+      const icon = btn.querySelector(".toggle-icon");
+
+      if (content && icon) {
+        const isHidden = content.classList.contains("hidden");
+        content.classList.toggle("hidden");
+        icon.textContent = isHidden ? "▼" : "▶";
+
+        // Render any unrendered diffs in this section when expanding
+        if (isHidden) {
+          content.querySelectorAll("[data-diff-content][data-needs-render='true']").forEach((el) => {
+            const diffEl = el as HTMLElement;
+            // Only render if the individual diff is not collapsed
+            if (!diffEl.classList.contains("hidden")) {
+              renderDiffContent(diffEl);
+              diffEl.dataset.needsRender = "false";
+            }
+          });
+        }
+      }
+    });
+  });
+
+  // Show raw diff fallback toggle
+  document.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    if (target.matches("[data-show-raw-diff]")) {
+      const rawDiff = target.nextElementSibling;
+      if (rawDiff) {
+        rawDiff.classList.toggle("hidden");
+        target.textContent = rawDiff.classList.contains("hidden") ? "Show raw diff" : "Hide raw diff";
+      }
+    }
+  });
+}
+
+function initializeCodeBlocks() {
+  // Clean up previous instances
+  fileInstances.forEach((instance) => instance.cleanUp());
+  fileInstances.length = 0;
+
+  document.querySelectorAll("[data-code-content]").forEach((el) => {
+    const htmlEl = el as HTMLElement;
+    const encodedContent = htmlEl.dataset.codeContent;
+    const language = htmlEl.dataset.language || "";
+
+    if (encodedContent) {
       try {
-        // Parse the patch to get FileDiffMetadata
-        const fileDiff = getSingularPatch(content);
+        // Decode base64-encoded content
+        const code = decodeURIComponent(atob(encodedContent));
 
-        // Get annotations for this diff
-        const annotations = diffId ? (annotationsByDiff[diffId] || []) : [];
-
-        // Convert to @pierre/diffs format
-        const lineAnnotations: DiffLineAnnotation<AnnotationMetadata>[] = annotations.map((a) => ({
-          side: a.side as "additions" | "deletions",
-          lineNumber: a.line_number,
-          metadata: {
-            id: a.id,
-            type: a.annotation_type,
-            content: a.content,
-            model: reviewModel,
-            filename,
-            lineNumber: a.line_number,
-          },
-        }));
-
-        // Create FileDiff instance with annotation rendering
-        const diffInstance = new FileDiff<AnnotationMetadata>({
+        // Create File instance with options matching diff styling
+        const fileInstance = new File({
           theme: { dark: "pierre-dark", light: "pierre-light" },
           themeType: "dark",
-          diffStyle: "unified",
-          diffIndicators: "classic",
-          disableFileHeader: true,
           overflow: "scroll",
-          renderAnnotation: (annotation) => createAnnotationElement(annotation.metadata),
+          disableFileHeader: true,
         });
 
-        // Create a container element
+        // Create a container element for the highlighted code
         const container = document.createElement("diffs-container");
+
+        // Check if this is a tool result content (has .tool-result-content class)
+        const isToolResult = htmlEl.classList.contains("tool-result-content");
+
+        // Preserve the copy button (different class for tool results vs code blocks)
+        const copyBtn = htmlEl.querySelector(".copy-code");
+
+        // For tool results, we need to preserve the pre element's id for copy functionality
+        const preEl = htmlEl.querySelector("pre");
+        const preId = preEl?.id;
+
         htmlEl.innerHTML = "";
         htmlEl.appendChild(container);
 
-        // Render the diff with annotations
-        diffInstance.render({
-          fileDiff,
+        // Re-add the copy button if it existed (for markdown code blocks)
+        if (copyBtn) {
+          container.appendChild(copyBtn);
+        }
+
+        // Render the highlighted code
+        fileInstance.render({
+          file: {
+            name: "code",
+            contents: code,
+            lang: language as SupportedLanguages || undefined,
+          },
           fileContainer: container,
-          lineAnnotations,
         });
 
-        diffInstances.push(diffInstance);
+        // For tool results, add an id to the rendered content for copy functionality
+        if (isToolResult && preId) {
+          const renderedPre = container.querySelector("pre");
+          if (renderedPre) {
+            renderedPre.id = preId;
+          }
+        }
+
+        fileInstances.push(fileInstance);
       } catch (err) {
-        console.error("Failed to render diff:", err);
-        htmlEl.innerHTML = `<pre class="p-3 text-diff-del text-sm">Failed to render diff</pre>`;
+        console.error("Failed to render code block:", err);
+        // Leave the fallback content in place
       }
     }
   });

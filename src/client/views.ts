@@ -1,16 +1,7 @@
 import type { Session, Message, Diff, Review } from "../db/schema";
+import { escapeHtml, renderContentBlocks, buildToolResultMap } from "./blocks";
 
-// HTML escaping utility
-export function escapeHtml(str: string): string {
-  const htmlEscapes: Record<string, string> = {
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  };
-  return str.replace(/[&<>"']/g, (char) => htmlEscapes[char]);
-}
+export { escapeHtml };
 
 // Session List View
 export function renderSessionList(sessions: Session[]): string {
@@ -128,7 +119,7 @@ export function renderSessionDetail({ session, messages, diffs, shareUrl, review
 
       <!-- Content -->
       <div class="max-w-[1800px] mx-auto px-6 lg:px-10 py-6">
-        <div class="${hasDiffs ? "grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-6" : "max-w-4xl"}">
+        <div class="${hasDiffs ? "grid grid-cols-1 lg:grid-cols-[2fr_3fr] gap-6" : "max-w-4xl"}">
           <!-- Conversation: main content, scrolls with page -->
           ${renderConversationPanel(messages)}
 
@@ -197,7 +188,7 @@ function getHarnessIcon(harness: string): string {
 function extractRepoName(repoUrl: string): string {
   // Extract user/repo from GitHub URL
   const match = repoUrl.match(/github\.com\/([^\/]+\/[^\/]+)/);
-  return match ? match[1] : repoUrl;
+  return match?.[1] ?? repoUrl;
 }
 
 function renderHeader(session: Session, date: string, resumeCommand: string): string {
@@ -326,32 +317,90 @@ function renderFooter(resumeCommand: string, shareUrl: string | null): string {
 
 function renderConversationPanel(messages: Message[]): string {
   // Conversation panel: sticky sidebar on left, fixed height with internal scroll
+  // Render messages with gap tracking based on actually rendered messages
+  let prevRenderedRole: string | null = null;
+  const renderedMessages: string[] = [];
+
+  for (let idx = 0; idx < messages.length; idx++) {
+    const result = renderMessageBlock(messages[idx], messages, idx, prevRenderedRole);
+    if (result) {
+      renderedMessages.push(result);
+      prevRenderedRole = messages[idx].role;
+    }
+  }
+
   return `
-    <div class="min-w-0 lg:sticky lg:top-[calc(3.5rem+1.5rem)] lg:self-start">
+    <div class="min-w-0 lg:sticky lg:top-[calc(3.5rem+1.5rem)] lg:self-start" style="height: calc(100vh - 10rem);">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-sm font-semibold text-text-primary">Conversation</h2>
         <span class="text-xs text-text-muted tabular-nums">${messages.length} messages</span>
       </div>
-      <div class="flex flex-col bg-bg-secondary border border-bg-elevated rounded-lg overflow-hidden" style="height: calc(100vh - 12rem);">
-        <div class="flex-1 overflow-y-auto divide-y divide-bg-elevated">
-          ${messages.map(renderMessageBlock).join("")}
-        </div>
+      <div class="flex-1 overflow-y-auto flex flex-col" style="height: calc(100% - 2rem);">
+        ${renderedMessages.join("")}
       </div>
     </div>
   `;
 }
 
 function renderDiffPanel(diffs: Diff[], review?: ReviewWithCount | null): string {
-  // Diff panel: main content area, scrolls with page
+  // Separate diffs by relevance
+  const sessionDiffs = diffs.filter((d) => d.is_session_relevant);
+  const otherDiffs = diffs.filter((d) => !d.is_session_relevant);
+
+  const sessionCount = sessionDiffs.length;
+  const otherCount = otherDiffs.length;
+  const totalCount = diffs.length;
+
   return `
-    <div class="min-w-0 space-y-4">
+    <div class="min-w-0">
       ${review ? renderReviewSummary(review) : ""}
-      <div class="flex items-center justify-between">
+      <div class="flex items-center justify-between mb-4">
         <h2 class="text-sm font-semibold text-text-primary">Code Changes</h2>
-        <span class="text-xs text-text-muted tabular-nums">${diffs.length} file${diffs.length !== 1 ? "s" : ""}</span>
+        <span class="text-xs text-text-muted tabular-nums">${totalCount} file${totalCount !== 1 ? "s" : ""}</span>
       </div>
-      <div id="diffs-container" class="space-y-4">
-        ${diffs.map(renderDiffBlock).join("")}
+      <div id="diffs-container" class="bg-bg-secondary border border-bg-elevated rounded-lg">
+        ${
+          sessionCount > 0
+            ? `
+          <div class="diff-group">
+            <div class="px-3 py-2 text-xs font-medium text-text-secondary bg-bg-tertiary border-b border-bg-elevated">
+              Changed in this session (${sessionCount})
+            </div>
+            ${sessionDiffs.map((d) => renderDiffBlock(d)).join("")}
+          </div>
+        `
+            : ""
+        }
+
+        ${
+          otherCount > 0
+            ? `
+          <div class="diff-group">
+            <button class="w-full px-3 py-2 text-xs font-medium text-text-muted bg-bg-tertiary border-b border-bg-elevated flex items-center gap-2 hover:bg-bg-elevated transition-colors"
+                    data-toggle-other-diffs>
+              <span class="toggle-icon transition-transform">▶</span>
+              <span>Other branch changes (${otherCount})</span>
+              <span class="text-text-muted/60 ml-auto truncate max-w-[200px]">
+                ${summarizeOtherFiles(otherDiffs)}
+              </span>
+            </button>
+            <div id="other-diffs-content" class="hidden">
+              ${otherDiffs.map((d) => renderDiffBlock(d)).join("")}
+            </div>
+          </div>
+        `
+            : ""
+        }
+
+        ${
+          totalCount === 0
+            ? `
+          <div class="flex items-center justify-center h-full text-text-muted text-sm py-8">
+            No code changes
+          </div>
+        `
+            : ""
+        }
       </div>
     </div>
   `;
@@ -359,7 +408,7 @@ function renderDiffPanel(diffs: Diff[], review?: ReviewWithCount | null): string
 
 function renderReviewSummary(review: ReviewWithCount): string {
   return `
-    <div class="bg-bg-secondary border border-bg-elevated rounded-lg overflow-hidden">
+    <div class="bg-bg-secondary border border-bg-elevated rounded-lg overflow-hidden mb-4">
       <div class="flex items-center justify-between px-4 py-2.5 bg-bg-tertiary border-b border-bg-elevated">
         <span class="text-sm font-medium text-text-primary flex items-center gap-2">
           <svg class="w-4 h-4 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -381,24 +430,101 @@ function renderReviewSummary(review: ReviewWithCount): string {
   `;
 }
 
-function renderMessageBlock(message: Message): string {
+function summarizeOtherFiles(diffs: Diff[]): string {
+  const names = diffs
+    .map((d) => d.filename?.split("/").pop() || "unknown")
+    .slice(0, 3);
+
+  if (diffs.length > 3) {
+    return names.join(", ") + "...";
+  }
+  return names.join(", ");
+}
+
+// Message role icons
+const messageIcons = {
+  user: `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>`,
+  assistant: `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M13.827 3.52h3.603L24 20h-3.603l-6.57-16.48zm-7.258 0h3.767L16.906 20h-3.674l-1.343-3.461H5.017L3.592 20H0l6.569-16.48zm2.327 5.14l-2.36 6.076h4.873l-2.513-6.077z"/></svg>`,
+  system: `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>`,
+};
+
+function renderMessageBlock(message: Message, allMessages: Message[], index: number, prevRenderedRole: string | null): string {
   const isUser = message.role === "user";
-  const roleLabel = isUser ? "You" : "Claude";
-  const bgClass = isUser ? "" : "bg-bg-tertiary";
-  const roleColor = isUser ? "text-role-user" : "text-role-assistant";
+  const isSystem = message.role === "system";
+  const roleLabel = isUser ? "You" : isSystem ? "System" : "Claude";
+  const roleColor = isUser ? "text-role-user" : isSystem ? "text-text-muted" : "text-role-assistant";
+  const borderColor = isUser ? "border-role-user" : isSystem ? "border-text-muted" : "border-role-assistant";
+  const icon = isUser ? messageIcons.user : isSystem ? messageIcons.system : messageIcons.assistant;
+
+  // Build tool result map from this and next messages
+  const toolResults = buildToolResultMapFromMessages(message, allMessages, index);
+
+  // Render content blocks if available, otherwise fall back to legacy content
+  const hasBlocks = message.content_blocks && message.content_blocks.length > 0;
+  const content = hasBlocks
+    ? renderContentBlocks(message.content_blocks, toolResults)
+    : formatMessageContent(message.content);
+
+  // Skip rendering if content is empty (e.g., all system tags stripped)
+  if (!content.trim()) return "";
+
+  // Add gap and show actor when role changes (based on previous *rendered* message)
+  const actorChanged = prevRenderedRole === null || prevRenderedRole !== message.role;
+  const gapClass = prevRenderedRole !== null && actorChanged ? "mt-2" : "";
+
+  // Only show actor header when role changes
+  const actorHeader = actorChanged ? `
+      <div class="flex items-center justify-between mb-0.5">
+        <div class="flex items-center gap-1.5">
+          <span class="${roleColor}">${icon}</span>
+          <span class="text-[13px] font-semibold uppercase tracking-wide ${roleColor}">
+            ${roleLabel}
+          </span>
+        </div>
+        <button class="copy-message p-0.5 text-text-muted hover:text-text-primary opacity-0 group-hover:opacity-100 transition-opacity"
+                title="Copy message">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+        </button>
+      </div>` : "";
 
   return `
-    <div class="px-4 py-4 ${bgClass}">
-      <div class="mb-2">
-        <span class="text-[11px] font-semibold uppercase tracking-wider ${roleColor}">
-          ${roleLabel}
-        </span>
-      </div>
-      <div class="text-sm text-text-primary leading-relaxed">
-        ${formatMessageContent(message.content)}
+    <div class="message py-1 pl-4 pr-3 border-l-2 ${borderColor} ${gapClass} group relative" data-message-index="${message.message_index}">${actorHeader}
+      <div class="text-sm text-text-primary leading-snug flex flex-col gap-0.5">
+        ${content}
       </div>
     </div>
   `;
+}
+
+function buildToolResultMapFromMessages(
+  message: Message,
+  allMessages: Message[],
+  currentIndex: number
+): Map<string, import("../db/schema").ToolResultBlock> {
+  const map = buildToolResultMap(message.content_blocks || []);
+
+  // Scan forward through subsequent messages to find tool results
+  // Tool results are in user messages, but they may be spread across multiple messages
+  for (let i = currentIndex + 1; i < allMessages.length && i <= currentIndex + 10; i++) {
+    const nextMsg = allMessages[i];
+    if (!nextMsg?.content_blocks) continue;
+
+    // Only user messages contain tool_result blocks
+    if (nextMsg.role !== "user") continue;
+
+    const nextResults = buildToolResultMap(nextMsg.content_blocks);
+    for (const [id, result] of nextResults) {
+      if (!map.has(id)) {
+        map.set(id, result);
+      }
+    }
+    // Don't break early - tool results may be spread across multiple user messages
+  }
+
+  return map;
 }
 
 function formatMessageContent(content: string): string {
@@ -427,30 +553,38 @@ function formatMessageContent(content: string): string {
 
 function renderDiffBlock(diff: Diff): string {
   const filename = diff.filename || "Unknown file";
-  const lines = diff.diff_content.split("\n");
+  // Use pre-computed stats from database
+  const additions = diff.additions || 0;
+  const deletions = diff.deletions || 0;
+  const totalChanges = additions + deletions;
 
-  // Count additions and deletions
-  let additions = 0;
-  let deletions = 0;
-  lines.forEach((line) => {
-    if (line.startsWith("+") && !line.startsWith("+++")) additions++;
-    else if (line.startsWith("-") && !line.startsWith("---")) deletions++;
-  });
+  // Large diff threshold - collapse by default if >300 lines changed
+  const isLarge = totalChanges > 300;
+  const isCollapsed = isLarge;
+  const blockId = `diff-${diff.diff_index}`;
 
   return `
-    <div class="bg-bg-secondary border border-bg-elevated rounded-lg overflow-hidden">
-      <div class="flex items-center justify-between px-4 py-2.5 bg-bg-tertiary border-b border-bg-elevated">
-        <span class="text-[13px] font-mono text-text-primary truncate">${escapeHtml(filename)}</span>
-        <div class="flex items-center gap-3 text-xs font-mono shrink-0 tabular-nums">
+    <div class="diff-file border-b border-bg-elevated last:border-b-0"
+         data-filename="${escapeHtml(filename)}">
+      <button class="diff-file-header flex items-center justify-between w-full px-3 py-2 bg-bg-tertiary border-b border-bg-elevated hover:bg-bg-elevated transition-colors text-left sticky top-14 z-10"
+              data-toggle-diff="${blockId}"
+              data-collapsed="${isCollapsed}">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="toggle-icon text-text-muted text-xs transition-transform">${isCollapsed ? "▶" : "▼"}</span>
+          <span class="text-[13px] font-mono text-text-primary truncate">${escapeHtml(filename)}</span>
+        </div>
+        <div class="flex items-center gap-2 text-xs font-mono shrink-0 tabular-nums">
           ${deletions > 0 ? `<span class="text-diff-del">-${deletions}</span>` : ""}
           ${additions > 0 ? `<span class="text-diff-add">+${additions}</span>` : ""}
+          ${isLarge ? `<span class="collapse-label text-text-muted ml-2">${isCollapsed ? "Show" : "Hide"}</span>` : ""}
         </div>
-      </div>
-      <div class="overflow-x-auto"
+      </button>
+      <div id="${blockId}" class="diff-content ${isCollapsed ? "hidden" : ""}"
            data-diff-content="${escapeHtml(diff.diff_content)}"
            data-diff-id="${diff.id}"
-           data-filename="${escapeHtml(filename)}">
-        <div class="px-4 py-3 text-text-muted text-sm">Loading diff...</div>
+           data-filename="${escapeHtml(filename)}"
+           data-needs-render="${isCollapsed ? "true" : "false"}">
+        ${isCollapsed ? "" : '<div class="px-4 py-3 text-text-muted text-sm">Loading diff...</div>'}
       </div>
     </div>
   `;
