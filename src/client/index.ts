@@ -132,19 +132,21 @@ function attachSessionListHandlers() {
 }
 
 function attachSessionDetailHandlers(sessionId: string) {
-  // Copy resume command
-  document.querySelectorAll("[data-copy-resume]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const command = document.getElementById("resume-command")?.textContent;
-      if (command) window.copyToClipboard(command.trim());
-    });
-  });
+  // Copy buttons with data-copy-target pattern
+  document.querySelectorAll("[data-copy-target]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const copyBtn = btn as HTMLElement;
+      const targetId = copyBtn.dataset.copyTarget;
+      const targetEl = document.getElementById(targetId!);
 
-  // Copy share URL
-  document.querySelectorAll("[data-copy-share]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const input = document.getElementById("share-url-input") as HTMLInputElement;
-      if (input) window.copyToClipboard(input.value);
+      if (targetEl) {
+        const text = targetEl.textContent?.trim() || "";
+        await window.copyToClipboard(text);
+
+        // Show feedback
+        copyBtn.classList.add("text-diff-add");
+        setTimeout(() => copyBtn.classList.remove("text-diff-add"), 1000);
+      }
     });
   });
 

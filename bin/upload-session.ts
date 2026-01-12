@@ -8,6 +8,9 @@
  * Options:
  *   --session, -s   Path to session JSONL file (default: auto-detect current session)
  *   --title, -t     Session title (default: derived from first user message)
+ *   --model, -m     Model used (default: auto-detect from session)
+ *   --harness       Harness/client used (default: "Claude Code")
+ *   --repo          GitHub repository URL (default: auto-detect from git remote)
  *   --diff, -d      Include git diff (default: true)
  *   --server        Server URL (default: http://localhost:3000)
  *   --help, -h      Show help
@@ -23,10 +26,14 @@ function parseArgs() {
   const options: {
     session?: string;
     title?: string;
+    model?: string;
+    harness: string;
+    repo?: string;
     diff: boolean;
     server: string;
     help: boolean;
   } = {
+    harness: "Claude Code",
     diff: true,
     server: "http://localhost:3000",
     help: false,
@@ -42,6 +49,16 @@ function parseArgs() {
       case "--title":
       case "-t":
         options.title = args[++i];
+        break;
+      case "--model":
+      case "-m":
+        options.model = args[++i];
+        break;
+      case "--harness":
+        options.harness = args[++i];
+        break;
+      case "--repo":
+        options.repo = args[++i];
         break;
       case "--diff":
       case "-d":
@@ -114,6 +131,50 @@ async function getGitDiff(): Promise<string | null> {
   }
 }
 
+async function getRepoUrl(): Promise<string | null> {
+  try {
+    const remote = await $`git remote get-url origin 2>/dev/null`.text();
+    const url = remote.trim();
+    if (!url) return null;
+
+    // Convert SSH to HTTPS format
+    // git@github.com:user/repo.git -> https://github.com/user/repo
+    if (url.startsWith("git@github.com:")) {
+      return url
+        .replace("git@github.com:", "https://github.com/")
+        .replace(/\.git$/, "");
+    }
+
+    // Already HTTPS, just clean up
+    if (url.includes("github.com")) {
+      return url.replace(/\.git$/, "");
+    }
+
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+function extractModel(sessionContent: string): string | null {
+  // Parse JSONL and look for model info in assistant messages
+  const lines = sessionContent.split("\n").filter(Boolean);
+
+  for (const line of lines) {
+    try {
+      const item = JSON.parse(line);
+      // Check for model field directly on the item
+      if (item.model) return item.model;
+      // Check in message object
+      if (item.message?.model) return item.message.model;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
 function extractTitle(sessionContent: string): string {
   // Parse JSONL and find first user message
   const lines = sessionContent.split("\n").filter(Boolean);
@@ -152,12 +213,18 @@ function extractTitle(sessionContent: string): string {
   return `Session ${new Date().toISOString().split("T")[0]}`;
 }
 
-async function uploadSession(
-  sessionPath: string,
-  title: string,
-  diffContent: string | null,
-  serverUrl: string
-): Promise<void> {
+interface UploadOptions {
+  sessionPath: string;
+  title: string;
+  model: string | null;
+  harness: string;
+  repoUrl: string | null;
+  diffContent: string | null;
+  serverUrl: string;
+}
+
+async function uploadSession(options: UploadOptions): Promise<void> {
+  const { sessionPath, title, model, harness, repoUrl, diffContent, serverUrl } = options;
   const sessionContent = await Bun.file(sessionPath).text();
   const sessionId = basename(sessionPath, ".jsonl");
 
@@ -165,6 +232,16 @@ async function uploadSession(
   formData.append("title", title);
   formData.append("claude_session_id", sessionId);
   formData.append("project_path", process.cwd());
+  formData.append("harness", harness);
+
+  if (model) {
+    formData.append("model", model);
+  }
+
+  if (repoUrl) {
+    formData.append("repo_url", repoUrl);
+  }
+
   formData.append(
     "session_file",
     new Blob([sessionContent], { type: "application/jsonl" }),
@@ -211,6 +288,9 @@ Usage:
 Options:
   --session, -s   Path to session JSONL file (default: auto-detect current session)
   --title, -t     Session title (default: derived from first user message)
+  --model, -m     Model used (default: auto-detect from session)
+  --harness       Harness/client used (default: "Claude Code")
+  --repo          GitHub repository URL (default: auto-detect from git remote)
   --diff, -d      Include git diff (default: true)
   --no-diff       Exclude git diff
   --server        Server URL (default: http://localhost:3000)
@@ -243,6 +323,21 @@ Options:
   const title = options.title || extractTitle(sessionContent);
   console.log(`Title: ${title}`);
 
+  // Extract or use provided model
+  const model = options.model || extractModel(sessionContent);
+  if (model) {
+    console.log(`Model: ${model}`);
+  }
+
+  // Harness (defaults to "Claude Code")
+  console.log(`Harness: ${options.harness}`);
+
+  // Get repo URL
+  const repoUrl = options.repo || (await getRepoUrl());
+  if (repoUrl) {
+    console.log(`Repo: ${repoUrl}`);
+  }
+
   // Get git diff if requested
   let diffContent: string | null = null;
   if (options.diff) {
@@ -257,7 +352,15 @@ Options:
 
   // Upload
   console.log(`Uploading to ${options.server}...`);
-  await uploadSession(sessionPath, title, diffContent, options.server);
+  await uploadSession({
+    sessionPath,
+    title,
+    model,
+    harness: options.harness,
+    repoUrl,
+    diffContent,
+    serverUrl: options.server,
+  });
 }
 
 main().catch((err) => {
