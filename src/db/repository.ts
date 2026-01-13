@@ -29,8 +29,8 @@ export class SessionRepository {
     // Initialize cached prepared statements
     this.stmts = {
       createSession: db.prepare(`
-        INSERT INTO sessions (id, title, description, claude_session_id, pr_url, share_token, project_path, model, harness, repo_url)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO sessions (id, title, description, claude_session_id, pr_url, share_token, project_path, model, harness, repo_url, status, last_activity_at, stream_token_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING *
       `),
       getSession: db.prepare("SELECT * FROM sessions WHERE id = ?"),
@@ -77,7 +77,7 @@ export class SessionRepository {
     };
   }
 
-  createSession(session: Omit<Session, "created_at" | "updated_at">): Session {
+  createSession(session: Omit<Session, "created_at" | "updated_at">, streamTokenHash?: string): Session {
     return this.stmts.createSession.get(
       session.id,
       session.title,
@@ -88,7 +88,10 @@ export class SessionRepository {
       session.project_path,
       session.model,
       session.harness,
-      session.repo_url
+      session.repo_url,
+      session.status || "archived",
+      session.last_activity_at,
+      streamTokenHash || null
     ) as Session;
   }
 
@@ -109,7 +112,10 @@ export class SessionRepository {
         session.project_path,
         session.model,
         session.harness,
-        session.repo_url
+        session.repo_url,
+        session.status || "archived",
+        session.last_activity_at,
+        null // stream_token_hash not used for batch uploads
       ) as Session;
 
       for (const msg of messages) {
@@ -180,6 +186,14 @@ export class SessionRepository {
     if (updates.repo_url !== undefined) {
       fields.push("repo_url = ?");
       values.push(updates.repo_url);
+    }
+    if (updates.status !== undefined) {
+      fields.push("status = ?");
+      values.push(updates.status);
+    }
+    if (updates.last_activity_at !== undefined) {
+      fields.push("last_activity_at = ?");
+      values.push(updates.last_activity_at);
     }
 
     if (fields.length === 0) return this.getSession(id);
@@ -289,6 +303,92 @@ export class SessionRepository {
 
   clearDiffs(sessionId: string): void {
     this.stmts.clearDiffs.run(sessionId);
+  }
+
+  // Live session methods
+  getLiveSessions(): Session[] {
+    const stmt = this.db.prepare("SELECT * FROM sessions WHERE status = 'live' ORDER BY last_activity_at DESC");
+    return stmt.all() as Session[];
+  }
+
+  // Get live sessions with message counts in a single query (avoids N+1)
+  getLiveSessionsWithCounts(): Array<Session & { message_count: number }> {
+    const stmt = this.db.prepare(`
+      SELECT s.*, COALESCE(m.cnt, 0) as message_count
+      FROM sessions s
+      LEFT JOIN (SELECT session_id, COUNT(*) as cnt FROM messages GROUP BY session_id) m
+        ON s.id = m.session_id
+      WHERE s.status = 'live'
+      ORDER BY s.last_activity_at DESC
+    `);
+    return stmt.all() as Array<Session & { message_count: number }>;
+  }
+
+  getMessageCount(sessionId: string): number {
+    const stmt = this.db.prepare("SELECT COUNT(*) as count FROM messages WHERE session_id = ?");
+    const result = stmt.get(sessionId) as { count: number };
+    return result.count;
+  }
+
+  getLastMessageIndex(sessionId: string): number {
+    const stmt = this.db.prepare("SELECT MAX(message_index) as last_index FROM messages WHERE session_id = ?");
+    const result = stmt.get(sessionId) as { last_index: number | null };
+    return result.last_index ?? -1;
+  }
+
+  // Atomically add messages with sequential indices (prevents race conditions)
+  addMessagesWithIndices(sessionId: string, messages: Array<Omit<Message, "id" | "message_index">>): { lastIndex: number; count: number } {
+    const transaction = this.db.transaction(() => {
+      // Get current max index within transaction
+      const stmt = this.db.prepare("SELECT MAX(message_index) as last_index FROM messages WHERE session_id = ?");
+      const result = stmt.get(sessionId) as { last_index: number | null };
+      let lastIndex = result.last_index ?? -1;
+
+      for (const msg of messages) {
+        lastIndex++;
+        this.stmts.insertMessage.run(
+          msg.session_id,
+          msg.role,
+          msg.content,
+          JSON.stringify(msg.content_blocks || []),
+          msg.timestamp,
+          lastIndex
+        );
+      }
+
+      return { lastIndex, count: messages.length };
+    });
+
+    return transaction();
+  }
+
+  verifyStreamToken(sessionId: string, tokenHash: string): boolean {
+    const stmt = this.db.prepare("SELECT stream_token_hash FROM sessions WHERE id = ? AND status = 'live'");
+    const result = stmt.get(sessionId) as { stream_token_hash: string | null } | null;
+
+    const storedHash = result?.stream_token_hash;
+    if (!storedHash) return false;
+
+    // Use constant-time comparison to prevent timing attacks
+    if (storedHash.length !== tokenHash.length) return false;
+
+    const storedBuffer = Buffer.from(storedHash, 'utf8');
+    const providedBuffer = Buffer.from(tokenHash, 'utf8');
+
+    // Bun supports crypto.timingSafeEqual
+    const crypto = require('crypto');
+    return crypto.timingSafeEqual(storedBuffer, providedBuffer);
+  }
+
+  getMessagesFromIndex(sessionId: string, fromIndex: number): Message[] {
+    const stmt = this.db.prepare(
+      "SELECT * FROM messages WHERE session_id = ? AND message_index >= ? ORDER BY message_index ASC"
+    );
+    const rows = stmt.all(sessionId, fromIndex) as Array<Record<string, unknown>>;
+    return rows.map(row => ({
+      ...row,
+      content_blocks: JSON.parse((row.content_blocks as string) || '[]'),
+    })) as Message[];
   }
 
   // Review methods

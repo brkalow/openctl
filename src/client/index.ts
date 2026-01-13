@@ -1,9 +1,10 @@
 import { Router } from "./router";
-import { renderSessionList, renderSessionDetail, renderNotFound, escapeHtml } from "./views";
+import { renderSessionList, renderSessionDetail, renderNotFound, renderSingleMessage, renderConnectionStatusHtml, renderDiffPanel, escapeHtml } from "./views";
 import type { Session, Message, Diff, Review, Annotation, AnnotationType } from "../db/schema";
 // Import @pierre/diffs - this registers the web component and provides FileDiff class
 import { FileDiff, getSingularPatch, File } from "@pierre/diffs";
 import type { SupportedLanguages, DiffLineAnnotation } from "@pierre/diffs";
+import { LiveSessionManager, isNearBottom, scrollToBottom } from "./liveSession";
 
 // Annotation metadata for rendering
 interface AnnotationMetadata {
@@ -17,6 +18,13 @@ interface AnnotationMetadata {
 
 // Initialize router
 const router = new Router();
+
+// Track current live session manager
+let liveSessionManager: LiveSessionManager | null = null;
+
+// Live session state
+let lastRenderedRole: string | null = null;
+let pendingToolCalls = new Set<string>();
 
 // Toast notification system
 declare global {
@@ -96,6 +104,13 @@ async function fetchSharedSession(shareToken: string): Promise<SessionDetailData
   return res.json();
 }
 
+async function fetchDiffs(sessionId: string): Promise<Diff[]> {
+  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/diffs`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.diffs || [];
+}
+
 async function fetchAnnotations(sessionId: string): Promise<AnnotationsData | null> {
   const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/annotations`);
   if (!res.ok) return null;
@@ -113,6 +128,12 @@ router.on("/", async () => {
 });
 
 router.on("/sessions/:id", async (params) => {
+  // Clean up previous live session
+  if (liveSessionManager) {
+    liveSessionManager.destroy();
+    liveSessionManager = null;
+  }
+
   const app = document.getElementById("app")!;
   app.innerHTML = '<div class="text-center py-8 text-text-muted">Loading...</div>';
 
@@ -124,6 +145,11 @@ router.on("/sessions/:id", async (params) => {
 
   app.innerHTML = renderSessionDetail(data);
   attachSessionDetailHandlers(data.session.id);
+
+  // Initialize live session if status is live
+  if (data.session.status === "live") {
+    initializeLiveSession(data.session.id, data.messages);
+  }
 });
 
 router.on("/s/:shareToken", async (params) => {
@@ -624,6 +650,263 @@ function initializeCodeBlocks() {
         console.error("Failed to render code block:", err);
         // Leave the fallback content in place
       }
+    }
+  });
+}
+
+// Live session initialization
+function initializeLiveSession(sessionId: string, initialMessages: Message[]): void {
+  // Track the last rendered role for proper message grouping
+  lastRenderedRole = initialMessages.length > 0 ? initialMessages[initialMessages.length - 1].role : null;
+  pendingToolCalls = new Set<string>();
+
+  // Build a set of all tool_use_ids and completed tool_result_ids in a single pass (O(n))
+  const allToolUseIds = new Set<string>();
+  const completedToolUseIds = new Set<string>();
+
+  for (const msg of initialMessages) {
+    if (msg.content_blocks) {
+      for (const block of msg.content_blocks) {
+        if (block.type === "tool_use") {
+          allToolUseIds.add(block.id);
+        } else if (block.type === "tool_result") {
+          completedToolUseIds.add(block.tool_use_id);
+        }
+      }
+    }
+  }
+
+  // Pending = tool_use_ids that don't have a corresponding tool_result
+  for (const id of allToolUseIds) {
+    if (!completedToolUseIds.has(id)) {
+      pendingToolCalls.add(id);
+    }
+  }
+
+  // Show typing indicator if there are pending tool calls
+  if (pendingToolCalls.size > 0) {
+    showTypingIndicator();
+  }
+
+  const conversationList = document.getElementById("conversation-list");
+  if (!conversationList) return;
+
+  // Set up new messages button
+  initNewMessagesButton(conversationList);
+
+  liveSessionManager = new LiveSessionManager(sessionId, {
+    onMessage: (messages, _index) => {
+      for (const message of messages) {
+        // Track pending tool calls
+        if (message.role === "assistant" && message.content_blocks) {
+          for (const block of message.content_blocks) {
+            if (block.type === "tool_use") {
+              pendingToolCalls.add(block.id);
+            }
+          }
+        }
+
+        // Render and append the message
+        const html = renderSingleMessage(message, lastRenderedRole);
+        if (html) {
+          // Insert before typing indicator
+          const typingIndicator = document.getElementById("typing-indicator");
+          if (typingIndicator) {
+            typingIndicator.insertAdjacentHTML("beforebegin", html);
+          } else {
+            conversationList.insertAdjacentHTML("beforeend", html);
+          }
+
+          lastRenderedRole = message.role;
+
+          // Update message count
+          updateMessageCount();
+
+          // Handle auto-scroll
+          if (isNearBottom(conversationList)) {
+            scrollToBottom(conversationList);
+            hideNewMessagesButton();
+          } else {
+            showNewMessagesButton();
+          }
+        }
+
+        // Show typing indicator if there are pending tool calls
+        if (pendingToolCalls.size > 0) {
+          showTypingIndicator();
+        }
+      }
+    },
+
+    onToolResult: (result) => {
+      // Remove from pending
+      pendingToolCalls.delete(result.tool_use_id);
+
+      // Update the tool call in the DOM
+      updateToolResult(result.tool_use_id, result.content, result.is_error);
+
+      // Hide typing indicator if no more pending
+      if (pendingToolCalls.size === 0) {
+        hideTypingIndicator();
+      }
+    },
+
+    onDiff: async (_files) => {
+      // Fetch and re-render diffs
+      const diffs = await fetchDiffs(sessionId);
+      const diffPanelContainer = document.querySelector('[data-diff-panel]');
+      if (diffPanelContainer) {
+        diffPanelContainer.innerHTML = renderDiffPanel(diffs);
+        // Re-attach diff toggle handlers
+        attachDiffToggleHandlers();
+        // Flash to indicate update
+        const newDiffPanel = document.getElementById("diffs-container");
+        if (newDiffPanel) {
+          newDiffPanel.classList.add("diff-update-flash");
+          setTimeout(() => newDiffPanel.classList.remove("diff-update-flash"), 500);
+        }
+      }
+    },
+
+    onComplete: () => {
+      // Update header to show completed status
+      updateSessionStatus("complete");
+      hideTypingIndicator();
+    },
+
+    onConnectionChange: (connected) => {
+      updateConnectionStatus(connected);
+    },
+
+    onReconnectAttempt: (attempt, maxAttempts) => {
+      updateConnectionStatus(false);
+      // Update status to show reconnection attempt
+      const container = document.getElementById("connection-status");
+      if (container) {
+        container.innerHTML = `
+          <span class="flex items-center gap-1 text-xs text-yellow-500">
+            <span class="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse"></span>
+            <span>Reconnecting (${attempt}/${maxAttempts})...</span>
+          </span>
+        `;
+      }
+    },
+
+    onReconnectFailed: () => {
+      const container = document.getElementById("connection-status");
+      if (container) {
+        container.innerHTML = `
+          <span class="flex items-center gap-1 text-xs text-red-500">
+            <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+            <span>Disconnected - <button onclick="location.reload()" class="underline hover:no-underline">Reload</button></span>
+          </span>
+        `;
+      }
+    },
+  });
+
+  liveSessionManager.connect();
+}
+
+function updateMessageCount(): void {
+  const countEl = document.getElementById("message-count");
+  if (countEl) {
+    const messages = document.querySelectorAll("[data-message-index]");
+    countEl.textContent = `${messages.length} messages`;
+  }
+}
+
+function updateConnectionStatus(connected: boolean): void {
+  const container = document.getElementById("connection-status");
+  if (container) {
+    container.innerHTML = renderConnectionStatusHtml(connected);
+  }
+}
+
+function updateSessionStatus(status: string): void {
+  // Remove live indicator
+  const liveIndicator = document.querySelector(".live-indicator");
+  if (liveIndicator) {
+    liveIndicator.remove();
+  }
+
+  // Remove connection status
+  const connectionStatus = document.getElementById("connection-status");
+  if (connectionStatus) {
+    const separator = connectionStatus.nextElementSibling;
+    if (separator?.classList.contains("text-text-muted/30")) {
+      separator.remove();
+    }
+    connectionStatus.remove();
+  }
+}
+
+function updateToolResult(toolUseId: string, _content: string, isError?: boolean): void {
+  // Find the tool call element by data-tool-id attribute
+  const toolCall = document.querySelector(`[data-tool-id="${toolUseId}"]`);
+  if (!toolCall) return;
+
+  // Update status indicator in the header
+  const header = toolCall.querySelector(".tool-header");
+  if (header) {
+    // Replace the status span (look for check, x, or ellipsis)
+    const statusSpan = header.querySelector(".tool-status");
+    if (statusSpan) {
+      statusSpan.outerHTML = isError
+        ? '<span class="tool-status text-red-500 font-medium">✗</span>'
+        : '<span class="tool-status text-green-500 font-medium">✓</span>';
+    }
+  }
+
+  // The full tool result will be part of the next message, so we don't need to add it here
+}
+
+function showTypingIndicator(): void {
+  const indicator = document.getElementById("typing-indicator");
+  if (indicator) {
+    indicator.classList.remove("hidden");
+    // Scroll to show typing indicator if near bottom
+    const container = indicator.parentElement;
+    if (container && isNearBottom(container)) {
+      scrollToBottom(container);
+    }
+  }
+}
+
+function hideTypingIndicator(): void {
+  const indicator = document.getElementById("typing-indicator");
+  if (indicator) {
+    indicator.classList.add("hidden");
+  }
+}
+
+function showNewMessagesButton(): void {
+  const btn = document.getElementById("new-messages-btn");
+  if (btn) {
+    btn.classList.remove("hidden");
+  }
+}
+
+function hideNewMessagesButton(): void {
+  const btn = document.getElementById("new-messages-btn");
+  if (btn) {
+    btn.classList.add("hidden");
+  }
+}
+
+function initNewMessagesButton(scrollContainer: HTMLElement): void {
+  const btn = document.getElementById("new-messages-btn");
+  if (btn) {
+    btn.addEventListener("click", () => {
+      scrollToBottom(scrollContainer);
+      hideNewMessagesButton();
+    });
+  }
+
+  // Hide button when user scrolls to bottom
+  scrollContainer.addEventListener("scroll", () => {
+    if (isNearBottom(scrollContainer)) {
+      hideNewMessagesButton();
     }
   });
 }

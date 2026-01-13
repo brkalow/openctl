@@ -1,5 +1,21 @@
 import { SessionRepository } from "../db/repository";
-import type { Message, Diff, ContentBlock, ToolUseBlock, ToolResultBlock, ImageBlock, AnnotationType } from "../db/schema";
+import type { Message, Diff, ContentBlock, ToolUseBlock, ToolResultBlock, ImageBlock, SessionStatus, AnnotationType } from "../db/schema";
+
+// Payload size limits to prevent DoS attacks
+const MAX_JSON_PAYLOAD_BYTES = 10 * 1024 * 1024; // 10MB for JSON payloads
+const MAX_DIFF_PAYLOAD_BYTES = 50 * 1024 * 1024; // 50MB for diff content
+
+// Validate content length before parsing
+function validateContentLength(req: Request, maxBytes: number): Response | null {
+  const contentLength = req.headers.get("Content-Length");
+  if (contentLength) {
+    const length = parseInt(contentLength, 10);
+    if (!isNaN(length) && length > maxBytes) {
+      return jsonError(`Payload too large (max ${Math.round(maxBytes / 1024 / 1024)}MB)`, 413);
+    }
+  }
+  return null;
+}
 
 // JSON response helper
 function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
@@ -21,6 +37,13 @@ function isValidHttpUrl(urlString: string): boolean {
   } catch {
     return false;
   }
+}
+
+// Parse SQLite datetime (YYYY-MM-DD HH:MM:SS) as UTC
+function parseSqliteDatetime(datetime: string): Date {
+  // SQLite datetime format: "2026-01-12 06:40:10"
+  // Convert to ISO format by replacing space with T and adding Z
+  return new Date(datetime.replace(" ", "T") + "Z");
 }
 
 // Content block parsing helpers
@@ -97,6 +120,17 @@ export function createApiRoutes(repo: SessionRepository) {
       }
 
       return json({ session, messages, diffs, shareUrl, review });
+    },
+
+    // Get diffs for a session
+    getSessionDiffs(sessionId: string): Response {
+      const session = repo.getSession(sessionId);
+      if (!session) {
+        return jsonError("Session not found", 404);
+      }
+
+      const diffs = repo.getDiffs(sessionId);
+      return json({ diffs });
     },
 
     // Get shared session detail
@@ -352,6 +386,342 @@ export function createApiRoutes(repo: SessionRepository) {
       });
     },
 
+    // === Live Streaming Endpoints ===
+
+    // Get all live sessions (uses single query with JOIN to avoid N+1)
+    getLiveSessions(): Response {
+      const sessions = repo.getLiveSessionsWithCounts();
+      return json({
+        sessions: sessions.map(s => ({
+          id: s.id,
+          title: s.title,
+          project_path: s.project_path,
+          message_count: s.message_count,
+          last_activity_at: s.last_activity_at,
+          duration_seconds: s.created_at
+            ? Math.floor((Date.now() - parseSqliteDatetime(s.created_at).getTime()) / 1000)
+            : 0,
+        })),
+      });
+    },
+
+    // Create a live session
+    async createLiveSession(req: Request): Promise<Response> {
+      try {
+        const body = await req.json();
+        const { title, project_path, claude_session_id, harness, model, repo_url } = body;
+
+        if (!title) {
+          return jsonError("Title is required", 400);
+        }
+
+        const id = generateId();
+        const streamToken = generateStreamToken();
+        const streamTokenHash = await hashToken(streamToken);
+        const now = new Date().toISOString();
+
+        repo.createSession(
+          {
+            id,
+            title,
+            description: null,
+            claude_session_id: claude_session_id || null,
+            pr_url: null,
+            share_token: null,
+            project_path: project_path || null,
+            model: model || null,
+            harness: harness || null,
+            repo_url: repo_url || null,
+            status: "live" as SessionStatus,
+            last_activity_at: now,
+          },
+          streamTokenHash
+        );
+
+        return json({
+          id,
+          stream_token: streamToken,
+          status: "live",
+        });
+      } catch (error) {
+        console.error("Error creating live session:", error);
+        return jsonError("Failed to create live session", 500);
+      }
+    },
+
+    // Push messages to a live session
+    async pushMessages(req: Request, sessionId: string): Promise<Response> {
+      try {
+        // Validate payload size
+        const sizeError = validateContentLength(req, MAX_JSON_PAYLOAD_BYTES);
+        if (sizeError) return sizeError;
+
+        // Verify stream token
+        const authHeader = req.headers.get("Authorization");
+        if (!authHeader?.startsWith("Bearer ")) {
+          return jsonError("Missing or invalid authorization", 401);
+        }
+
+        const token = authHeader.slice(7);
+        const tokenHash = await hashToken(token);
+        if (!repo.verifyStreamToken(sessionId, tokenHash)) {
+          return jsonError("Invalid stream token or session not live", 401);
+        }
+
+        const session = repo.getSession(sessionId);
+        if (!session) {
+          return jsonError("Session not found", 404);
+        }
+        if (session.status !== "live") {
+          return jsonError("Session is not live", 409);
+        }
+
+        const body = await req.json();
+        const { messages: rawMessages } = body;
+
+        if (!Array.isArray(rawMessages)) {
+          return jsonError("messages must be an array", 400);
+        }
+
+        // Parse messages without indices first
+        const parsedMessages: Array<Omit<Message, "id" | "message_index">> = [];
+        for (const item of rawMessages) {
+          const msg = extractMessageData(item, sessionId);
+          if (msg) {
+            parsedMessages.push(msg);
+          }
+        }
+
+        if (parsedMessages.length === 0) {
+          return json({
+            appended: 0,
+            message_count: repo.getMessageCount(sessionId),
+            last_index: repo.getLastMessageIndex(sessionId),
+          });
+        }
+
+        // Atomically add messages with sequential indices (prevents race conditions)
+        const { lastIndex, count } = repo.addMessagesWithIndices(sessionId, parsedMessages);
+
+        // Update last activity
+        repo.updateSession(sessionId, {
+          last_activity_at: new Date().toISOString(),
+        });
+
+        // Reconstruct messages with their assigned indices for broadcast
+        const startIndex = lastIndex - count + 1;
+        const messagesWithIndices = parsedMessages.map((msg, i) => ({
+          ...msg,
+          message_index: startIndex + i,
+        }));
+
+        // Notify WebSocket subscribers
+        broadcastToSession(sessionId, {
+          type: "message",
+          messages: messagesWithIndices,
+          index: lastIndex,
+        });
+
+        return json({
+          appended: count,
+          message_count: repo.getMessageCount(sessionId),
+          last_index: lastIndex,
+        });
+      } catch (error) {
+        console.error("Error pushing messages:", error);
+        return jsonError("Failed to push messages", 500);
+      }
+    },
+
+    // Push tool results
+    async pushToolResults(req: Request, sessionId: string): Promise<Response> {
+      try {
+        // Validate payload size
+        const sizeError = validateContentLength(req, MAX_JSON_PAYLOAD_BYTES);
+        if (sizeError) return sizeError;
+
+        const authHeader = req.headers.get("Authorization");
+        if (!authHeader?.startsWith("Bearer ")) {
+          return jsonError("Missing or invalid authorization", 401);
+        }
+
+        const token = authHeader.slice(7);
+        const tokenHash = await hashToken(token);
+        if (!repo.verifyStreamToken(sessionId, tokenHash)) {
+          return jsonError("Invalid stream token or session not live", 401);
+        }
+
+        const session = repo.getSession(sessionId);
+        if (!session || session.status !== "live") {
+          return jsonError("Session not found or not live", 404);
+        }
+
+        const body = await req.json();
+        const { results } = body;
+
+        if (!Array.isArray(results)) {
+          return jsonError("results must be an array", 400);
+        }
+
+        // Broadcast each tool result
+        for (const result of results) {
+          broadcastToSession(sessionId, {
+            type: "tool_result",
+            tool_use_id: result.tool_use_id,
+            content: result.content,
+            is_error: result.is_error,
+            message_index: result.message_index,
+          });
+        }
+
+        repo.updateSession(sessionId, {
+          last_activity_at: new Date().toISOString(),
+        });
+
+        return json({
+          matched: results.length,
+          pending: 0,
+        });
+      } catch (error) {
+        console.error("Error pushing tool results:", error);
+        return jsonError("Failed to push tool results", 500);
+      }
+    },
+
+    // Update diff for a live session
+    async updateDiff(req: Request, sessionId: string): Promise<Response> {
+      try {
+        // Validate payload size (larger limit for diffs)
+        const sizeError = validateContentLength(req, MAX_DIFF_PAYLOAD_BYTES);
+        if (sizeError) return sizeError;
+
+        const authHeader = req.headers.get("Authorization");
+        if (!authHeader?.startsWith("Bearer ")) {
+          return jsonError("Missing or invalid authorization", 401);
+        }
+
+        const token = authHeader.slice(7);
+        const tokenHash = await hashToken(token);
+        if (!repo.verifyStreamToken(sessionId, tokenHash)) {
+          return jsonError("Invalid stream token or session not live", 401);
+        }
+
+        const session = repo.getSession(sessionId);
+        if (!session || session.status !== "live") {
+          return jsonError("Session not found or not live", 404);
+        }
+
+        const diffContent = await req.text();
+        const messages = repo.getMessages(sessionId);
+        const touchedFiles = extractTouchedFiles(messages);
+        const diffs = parseDiffData(diffContent, sessionId, touchedFiles);
+
+        // Replace existing diffs
+        repo.clearDiffs(sessionId);
+        repo.addDiffs(diffs);
+
+        // Calculate totals
+        let additions = 0;
+        let deletions = 0;
+        for (const d of diffs) {
+          additions += d.additions || 0;
+          deletions += d.deletions || 0;
+        }
+
+        // Broadcast diff update
+        broadcastToSession(sessionId, {
+          type: "diff",
+          files: diffs.map(d => ({
+            filename: d.filename || "unknown",
+            additions: d.additions || 0,
+            deletions: d.deletions || 0,
+          })),
+        });
+
+        return json({
+          files_changed: diffs.length,
+          additions,
+          deletions,
+        });
+      } catch (error) {
+        console.error("Error updating diff:", error);
+        return jsonError("Failed to update diff", 500);
+      }
+    },
+
+    // Complete a live session
+    async completeSession(req: Request, sessionId: string): Promise<Response> {
+      try {
+        const authHeader = req.headers.get("Authorization");
+        if (!authHeader?.startsWith("Bearer ")) {
+          return jsonError("Missing or invalid authorization", 401);
+        }
+
+        const token = authHeader.slice(7);
+        const tokenHash = await hashToken(token);
+        if (!repo.verifyStreamToken(sessionId, tokenHash)) {
+          return jsonError("Invalid stream token or session not live", 401);
+        }
+
+        const session = repo.getSession(sessionId);
+        if (!session) {
+          return jsonError("Session not found", 404);
+        }
+
+        const body = await req.json().catch(() => ({}));
+        const { final_diff, summary } = body;
+
+        // Update description if summary provided
+        const updates: Partial<{ status: SessionStatus; description: string; last_activity_at: string }> = {
+          status: "complete",
+          last_activity_at: new Date().toISOString(),
+        };
+
+        if (summary) {
+          updates.description = summary;
+        }
+
+        repo.updateSession(sessionId, updates);
+
+        // Update diff if provided
+        if (final_diff) {
+          const messages = repo.getMessages(sessionId);
+          const touchedFiles = extractTouchedFiles(messages);
+          const diffs = parseDiffData(final_diff, sessionId, touchedFiles);
+          repo.clearDiffs(sessionId);
+          repo.addDiffs(diffs);
+        }
+
+        const messageCount = repo.getMessageCount(sessionId);
+        const durationSeconds = session.created_at
+          ? Math.floor((Date.now() - parseSqliteDatetime(session.created_at).getTime()) / 1000)
+          : 0;
+
+        // Broadcast completion
+        broadcastToSession(sessionId, {
+          type: "complete",
+          final_message_count: messageCount,
+        });
+
+        // Close all WebSocket connections for this session
+        closeSessionConnections(sessionId);
+
+        return json({
+          status: "complete",
+          message_count: messageCount,
+          duration_seconds: durationSeconds,
+        });
+      } catch (error) {
+        console.error("Error completing session:", error);
+        return jsonError("Failed to complete session", 500);
+      }
+    },
+
+    // Get the repository for WebSocket handling
+    getRepository(): SessionRepository {
+      return repo;
+    },
+
     // Get annotations for a session (for lazy loading in frontend)
     getAnnotations(sessionId: string): Response {
       const session = repo.getSession(sessionId);
@@ -369,6 +739,83 @@ export function createApiRoutes(repo: SessionRepository) {
       return json({ review, annotations_by_diff: annotationsByDiff });
     },
   };
+}
+
+// Stream token generation and hashing
+function generateStreamToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return `stk_${Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+async function hashToken(token: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(token);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// WebSocket connection management
+const sessionSubscribers = new Map<string, Set<WebSocket>>();
+
+export function addSessionSubscriber(sessionId: string, ws: WebSocket): void {
+  if (!sessionSubscribers.has(sessionId)) {
+    sessionSubscribers.set(sessionId, new Set());
+  }
+  sessionSubscribers.get(sessionId)!.add(ws);
+}
+
+export function removeSessionSubscriber(sessionId: string, ws: WebSocket): void {
+  const subscribers = sessionSubscribers.get(sessionId);
+  if (subscribers) {
+    subscribers.delete(ws);
+    if (subscribers.size === 0) {
+      sessionSubscribers.delete(sessionId);
+    }
+  }
+}
+
+function broadcastToSession(sessionId: string, message: unknown): void {
+  const subscribers = sessionSubscribers.get(sessionId);
+  if (!subscribers) return;
+
+  const data = JSON.stringify(message);
+  const toRemove: WebSocket[] = [];
+
+  for (const ws of subscribers) {
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(data);
+      } catch {
+        // Failed to send, mark for removal
+        toRemove.push(ws);
+      }
+    } else {
+      // Connection closed, mark for removal
+      toRemove.push(ws);
+    }
+  }
+
+  // Clean up dead connections
+  for (const ws of toRemove) {
+    subscribers.delete(ws);
+  }
+
+  // Clean up empty subscriber sets
+  if (subscribers.size === 0) {
+    sessionSubscribers.delete(sessionId);
+  }
+}
+
+function closeSessionConnections(sessionId: string): void {
+  const subscribers = sessionSubscribers.get(sessionId);
+  if (!subscribers) return;
+
+  for (const ws of subscribers) {
+    ws.close(1000, "Session complete");
+  }
+  sessionSubscribers.delete(sessionId);
 }
 
 function generateId(): string {
@@ -451,11 +898,13 @@ function parseSessionData(content: string, sessionId: string): Omit<Message, "id
   return messages;
 }
 
-function extractMessage(
+// Extract message data without index (for atomic insertion)
+type MessageData = Omit<Message, "id" | "message_index">;
+
+function extractMessageData(
   item: Record<string, unknown>,
-  sessionId: string,
-  index: number
-): Omit<Message, "id"> | null {
+  sessionId: string
+): MessageData | null {
   let role: string | null = null;
   let contentBlocks: ContentBlock[] = [];
   let timestamp: string | null = null;
@@ -497,8 +946,17 @@ function extractMessage(
     content: deriveTextContent(contentBlocks),
     content_blocks: contentBlocks,
     timestamp,
-    message_index: index,
   };
+}
+
+function extractMessage(
+  item: Record<string, unknown>,
+  sessionId: string,
+  index: number
+): Omit<Message, "id"> | null {
+  const data = extractMessageData(item, sessionId);
+  if (!data) return null;
+  return { ...data, message_index: index };
 }
 
 // Diff relevance detection helpers

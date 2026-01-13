@@ -87,3 +87,81 @@ code, pre {
     opacity: 1;
   }
 }
+
+/* === Live Session Animations === */
+
+/* Pulse animation for live indicator */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Live indicator dot with glow effect */
+.live-indicator .live-dot {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
+}
+
+/* Bounce animation for typing indicator */
+@keyframes bounce {
+  0%, 80%, 100% {
+    transform: translateY(0);
+  }
+  40% {
+    transform: translateY(-4px);
+  }
+}
+
+.animate-bounce {
+  animation: bounce 1.4s infinite ease-in-out;
+}
+
+/* Message enter animation */
+.message-enter {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.message-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* Diff update flash */
+.diff-update-flash {
+  animation: diff-flash 0.5s ease;
+}
+
+@keyframes diff-flash {
+  0% {
+    background-color: rgba(110, 181, 255, 0.15);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+/* New messages button slide up */
+@keyframes slide-up {
+  from {
+    transform: translate(-50%, 20px);
+    opacity: 0;
+  }
+  to {
+    transform: translate(-50%, 0);
+    opacity: 1;
+  }
+}
+
+#new-messages-btn:not(.hidden) {
+  animation: slide-up 0.2s ease-out;
+}
