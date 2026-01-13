@@ -23,6 +23,10 @@ export class SessionRepository {
     insertAnnotation: Statement;
     getAnnotationsByDiff: Statement;
     getAnnotationsBySession: Statement;
+    // Live session statements
+    getLiveSessionByHarnessId: Statement;
+    getSessionByHarnessId: Statement;
+    getLiveSessions: Statement;
   };
 
   constructor(private db: Database) {
@@ -74,6 +78,22 @@ export class SessionRepository {
         JOIN reviews r ON a.review_id = r.id
         WHERE r.session_id = ?
       `),
+      // Live session statements
+      getLiveSessionByHarnessId: db.prepare(`
+        SELECT * FROM sessions
+        WHERE claude_session_id = ? AND harness = ? AND status = 'live'
+        ORDER BY created_at DESC
+        LIMIT 1
+      `),
+      getSessionByHarnessId: db.prepare(`
+        SELECT * FROM sessions
+        WHERE claude_session_id = ? AND harness = ?
+        ORDER BY
+          CASE WHEN status = 'live' THEN 0 ELSE 1 END,
+          created_at DESC
+        LIMIT 1
+      `),
+      getLiveSessions: db.prepare("SELECT * FROM sessions WHERE status = 'live' ORDER BY last_activity_at DESC"),
     };
   }
 
@@ -216,6 +236,23 @@ export class SessionRepository {
     return this.stmts.getSessionByShareToken.get(token) as Session | null;
   }
 
+  /**
+   * Find a live session by harness session ID.
+   * Used to resume streaming to an existing session after daemon restart.
+   */
+  getLiveSessionByHarnessId(harnessSessionId: string, harness: string): Session | null {
+    return this.stmts.getLiveSessionByHarnessId.get(harnessSessionId, harness) as Session | null;
+  }
+
+  /**
+   * Find any session by harness session ID (regardless of status).
+   * Used to restore a completed session back to live streaming.
+   * Prefers live sessions, then archived/completed by most recent.
+   */
+  getSessionByHarnessId(harnessSessionId: string, harness: string): Session | null {
+    return this.stmts.getSessionByHarnessId.get(harnessSessionId, harness) as Session | null;
+  }
+
   getAllSessions(): Session[] {
     return this.stmts.getAllSessions.all() as Session[];
   }
@@ -307,8 +344,7 @@ export class SessionRepository {
 
   // Live session methods
   getLiveSessions(): Session[] {
-    const stmt = this.db.prepare("SELECT * FROM sessions WHERE status = 'live' ORDER BY last_activity_at DESC");
-    return stmt.all() as Session[];
+    return this.stmts.getLiveSessions.all() as Session[];
   }
 
   // Get live sessions with message counts in a single query (avoids N+1)
@@ -378,6 +414,36 @@ export class SessionRepository {
     // Bun supports crypto.timingSafeEqual
     const crypto = require('crypto');
     return crypto.timingSafeEqual(storedBuffer, providedBuffer);
+  }
+
+  /**
+   * Update the stream token hash for an existing live session.
+   * Used when resuming a session after daemon restart.
+   */
+  updateStreamToken(sessionId: string, newTokenHash: string): boolean {
+    const stmt = this.db.prepare(`
+      UPDATE sessions SET stream_token_hash = ?, updated_at = datetime('now')
+      WHERE id = ? AND status = 'live'
+    `);
+    const result = stmt.run(newTokenHash, sessionId);
+    return result.changes > 0;
+  }
+
+  /**
+   * Restore a session to live status and update its stream token.
+   * Used to resume streaming to a completed/archived session.
+   */
+  restoreSessionToLive(sessionId: string, newTokenHash: string): boolean {
+    const stmt = this.db.prepare(`
+      UPDATE sessions SET
+        stream_token_hash = ?,
+        status = 'live',
+        last_activity_at = datetime('now'),
+        updated_at = datetime('now')
+      WHERE id = ?
+    `);
+    const result = stmt.run(newTokenHash, sessionId);
+    return result.changes > 0;
   }
 
   getMessagesFromIndex(sessionId: string, fromIndex: number): Message[] {
@@ -485,7 +551,10 @@ export class SessionRepository {
         session.project_path,
         session.model,
         session.harness,
-        session.repo_url
+        session.repo_url,
+        session.status || "archived",
+        session.last_activity_at,
+        null // stream_token_hash not used for batch uploads
       ) as Session;
 
       // Insert messages
