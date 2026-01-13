@@ -64,8 +64,18 @@ export function initializeDatabase(dbPath: string = "sessions.db"): Database {
   safeAddColumn(db, "sessions", "harness", "TEXT");
   safeAddColumn(db, "sessions", "repo_url", "TEXT");
 
+  // Live streaming support
+  safeAddColumn(db, "sessions", "status", "TEXT DEFAULT 'archived'");
+  safeAddColumn(db, "sessions", "last_activity_at", "TEXT");
+  safeAddColumn(db, "sessions", "stream_token_hash", "TEXT");
+
+  // Index for live session queries
+  db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)`);
+
   return db;
 }
+
+export type SessionStatus = "live" | "complete" | "archived";
 
 export type Session = {
   id: string;
@@ -78,6 +88,8 @@ export type Session = {
   model: string | null;
   harness: string | null;
   repo_url: string | null;
+  status: SessionStatus;
+  last_activity_at: string | null;
   created_at: string;
   updated_at: string;
 };

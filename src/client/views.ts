@@ -1,5 +1,6 @@
 import type { Session, Message, Diff } from "../db/schema";
 import { escapeHtml, renderContentBlocks, buildToolResultMap } from "./blocks";
+import { formatDuration } from "./liveSession";
 
 export { escapeHtml };
 
@@ -186,7 +187,53 @@ function extractRepoName(repoUrl: string): string {
   return match?.[1] ?? repoUrl;
 }
 
+// Live indicator component
+function renderLiveIndicator(): string {
+  return `
+    <div class="live-indicator flex items-center gap-1.5">
+      <span class="live-dot w-2 h-2 rounded-full bg-green-500"></span>
+      <span class="text-xs font-bold uppercase tracking-wide text-green-500">LIVE</span>
+    </div>
+  `;
+}
+
+// Connection status component
+function renderConnectionStatus(): string {
+  return `<span id="connection-status"></span>`;
+}
+
+// Typing indicator component
+function renderTypingIndicator(): string {
+  return `
+    <div id="typing-indicator" class="hidden flex items-center gap-2 py-3 px-4 text-text-muted border-l-2 border-role-assistant">
+      <div class="flex gap-1">
+        <span class="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style="animation-delay: 0ms"></span>
+        <span class="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style="animation-delay: 150ms"></span>
+        <span class="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style="animation-delay: 300ms"></span>
+      </div>
+      <span class="text-sm">Claude is working...</span>
+    </div>
+  `;
+}
+
+// New messages button component
+function renderNewMessagesButton(): string {
+  return `
+    <button
+      id="new-messages-btn"
+      class="hidden fixed bottom-8 left-1/2 -translate-x-1/2
+             px-4 py-2 bg-accent-primary text-bg-primary text-sm font-medium rounded-full
+             shadow-lg hover:bg-accent-primary/90 transition-all z-50"
+    >
+      New messages
+    </button>
+  `;
+}
+
 function renderHeader(session: Session, date: string, resumeCommand: string): string {
+  const isLive = session.status === "live";
+  const timeDisplay = isLive ? formatDuration(session.created_at) : date;
+
   // Project/repo display - prefer repo name if available
   const projectPathHtml = session.repo_url
     ? `<a href="${escapeHtml(session.repo_url)}" target="_blank" rel="noopener noreferrer"
@@ -219,13 +266,20 @@ function renderHeader(session: Session, date: string, resumeCommand: string): st
   return `
     <header class="border-b border-bg-elevated">
       <div class="max-w-[1800px] mx-auto px-6 lg:px-10 py-5">
-        <!-- Title -->
-        <h1 class="text-2xl font-semibold text-text-primary mb-2">
-          ${escapeHtml(session.title)}
-        </h1>
+        <!-- Title row -->
+        <div class="flex items-center gap-3 mb-2">
+          ${isLive ? renderLiveIndicator() : ""}
+          <h1 class="text-2xl font-semibold text-text-primary">
+            ${escapeHtml(session.title)}
+          </h1>
+        </div>
 
         <!-- Metadata line -->
         <div class="flex items-center gap-4 text-sm text-text-muted">
+          ${isLive ? `
+            ${renderConnectionStatus()}
+            <span class="text-text-muted/30">·</span>
+          ` : ""}
           ${harnessHtml ? `
             ${harnessHtml}
             <span class="text-text-muted/30">·</span>
@@ -238,7 +292,7 @@ function renderHeader(session: Session, date: string, resumeCommand: string): st
             ${projectPathHtml}
             <span class="text-text-muted/30">·</span>
           ` : ""}
-          <span>${date}</span>
+          <span>${timeDisplay}</span>
           ${session.pr_url ? `
             <span class="text-text-muted/30">·</span>
             <a href="${escapeHtml(session.pr_url)}" target="_blank" rel="noopener noreferrer"
@@ -328,12 +382,14 @@ function renderConversationPanel(messages: Message[]): string {
     <div class="min-w-0 lg:sticky lg:top-[calc(3.5rem+1.5rem)] lg:self-start" style="height: calc(100vh - 10rem);">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-sm font-semibold text-text-primary">Conversation</h2>
-        <span class="text-xs text-text-muted tabular-nums">${messages.length} messages</span>
+        <span id="message-count" class="text-xs text-text-muted tabular-nums">${messages.length} messages</span>
       </div>
-      <div class="flex-1 overflow-y-auto flex flex-col" style="height: calc(100% - 2rem);">
+      <div id="conversation-list" class="conversation-panel flex-1 overflow-y-auto flex flex-col" style="height: calc(100% - 2rem);">
         ${renderedMessages.join("")}
+        ${renderTypingIndicator()}
       </div>
     </div>
+    ${renderNewMessagesButton()}
   `;
 }
 
@@ -567,5 +623,29 @@ export function renderNotFound(): string {
       <p class="text-text-muted mb-4">The page or session you're looking for doesn't exist.</p>
       <a href="/" class="btn btn-primary">Go Home</a>
     </div>
+  `;
+}
+
+// Export function to render a single message for live appending
+export function renderSingleMessage(message: Message, prevRole: string | null): string {
+  return renderMessageBlock(message, [message], 0, prevRole);
+}
+
+// Connection status rendering
+export function renderConnectionStatusHtml(connected: boolean): string {
+  if (connected) {
+    return `
+      <span class="flex items-center gap-1 text-xs text-text-muted">
+        <span class="w-1.5 h-1.5 rounded-full bg-green-400"></span>
+        <span>Connected</span>
+      </span>
+    `;
+  }
+
+  return `
+    <span class="flex items-center gap-1 text-xs text-yellow-500">
+      <span class="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse"></span>
+      <span>Reconnecting...</span>
+    </span>
   `;
 }

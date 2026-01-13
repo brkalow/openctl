@@ -318,12 +318,12 @@ function getToolSummary(block: ToolUseBlock): string {
 
 function getToolStatus(result?: ToolResultBlock): string {
   if (!result) {
-    return '<span class="text-text-muted">...</span>';
+    return '<span class="tool-status text-text-muted">...</span>';
   }
   if (result.is_error) {
-    return '<span class="text-diff-del">&#10007;</span>';
+    return '<span class="tool-status text-diff-del">&#10007;</span>';
   }
-  return '<span class="text-diff-add">&#10003;</span>';
+  return '<span class="tool-status text-diff-add">&#10003;</span>';
 }
 
 function extractErrorSummary(content: string): string {
