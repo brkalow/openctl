@@ -12,6 +12,7 @@
  *   --harness       Harness/client used (default: "Claude Code")
  *   --repo          GitHub repository URL (default: auto-detect from git remote)
  *   --diff, -d      Include git diff (default: true)
+ *   --review, -r    Generate code review using Claude CLI (default: false)
  *   --server        Server URL (default: http://localhost:3000)
  *   --help, -h      Show help
  */
@@ -19,6 +20,21 @@
 import { $ } from "bun";
 import { existsSync } from "fs";
 import { basename, join } from "path";
+
+// Review types
+interface ReviewAnnotation {
+  filename: string;
+  line_number: number;
+  side: "additions" | "deletions";
+  annotation_type: "suggestion" | "issue" | "praise" | "question";
+  content: string;
+}
+
+interface ReviewOutput {
+  summary: string;
+  model: string;
+  annotations: ReviewAnnotation[];
+}
 
 const args = process.argv.slice(2);
 
@@ -30,11 +46,13 @@ function parseArgs() {
     harness: string;
     repo?: string;
     diff: boolean;
+    review: boolean;
     server: string;
     help: boolean;
   } = {
     harness: "Claude Code",
     diff: true,
+    review: false,
     server: "http://localhost:3000",
     help: false,
   };
@@ -66,6 +84,10 @@ function parseArgs() {
         break;
       case "--no-diff":
         options.diff = false;
+        break;
+      case "--review":
+      case "-r":
+        options.review = true;
         break;
       case "--server":
         options.server = args[++i];
@@ -156,6 +178,96 @@ async function getRepoUrl(): Promise<string | null> {
   }
 }
 
+// JSON schema for review output
+const reviewSchema = JSON.stringify({
+  type: "object",
+  properties: {
+    summary: { type: "string", description: "2-3 sentence summary of the review findings" },
+    annotations: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          filename: { type: "string", description: "File path from diff header" },
+          line_number: { type: "number", description: "Line number in the new file" },
+          side: { enum: ["additions", "deletions"], description: "Which side of the diff" },
+          annotation_type: { enum: ["issue", "suggestion"], description: "Type of finding" },
+          content: { type: "string", description: "Concise description of the issue" },
+        },
+        required: ["filename", "line_number", "side", "annotation_type", "content"],
+      },
+    },
+  },
+  required: ["summary", "annotations"],
+});
+
+const reviewPrompt = `You are a code reviewer. Review the diff using a parallel strategy:
+
+## Review Strategy
+
+Launch 3 parallel review passes, each with a different focus:
+
+1. **Defects** - Logic errors, boundary conditions, null/undefined handling, missing validation, error handling gaps, edge cases
+2. **Security** - Injection risks, authentication/authorization issues, exposed secrets, unsafe operations
+3. **Architecture** - Pattern violations, unnecessary complexity, performance issues (N+1 queries, quadratic algorithms on unbounded data)
+
+Aggregate findings by: deduplicating similar issues, ranking by severity, keeping only issues with realistic impact.
+
+## Review Standards
+
+- **Be certain** - Don't speculate about bugs; verify before flagging
+- **Be realistic** - Only raise edge cases with plausible scenarios
+- **Stay focused** - Only review modified code, not pre-existing issues
+- **Skip style** - No nitpicks on formatting or preferences
+- **Be direct** - Factual tone, specific file/line references, actionable suggestions
+
+Return a summary and annotations for significant findings only.`;
+
+async function generateReview(diffContent: string): Promise<ReviewOutput | null> {
+  console.log("Generating code review...");
+
+  const prompt = `${reviewPrompt}
+
+<diff>
+${diffContent}
+</diff>`;
+
+  try {
+    // Use Bun.spawn for better control over argument passing
+    const proc = Bun.spawn([
+      "claude",
+      "-p", prompt,
+      "--output-format", "json",
+      "--json-schema", reviewSchema,
+    ], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const output = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+      console.error("Claude CLI error:", stderr || output);
+      return null;
+    }
+
+    const reviewResult = JSON.parse(output) as { summary: string; annotations: ReviewOutput["annotations"] };
+
+    console.log(`Review found ${reviewResult.annotations.length} issues`);
+
+    return {
+      summary: reviewResult.summary,
+      model: "claude",
+      annotations: reviewResult.annotations,
+    };
+  } catch (err) {
+    console.error("Review generation failed:", err);
+    return null;
+  }
+}
+
 function extractModel(sessionContent: string): string | null {
   // Parse JSONL and look for model info in assistant messages
   const lines = sessionContent.split("\n").filter(Boolean);
@@ -221,10 +333,11 @@ interface UploadOptions {
   repoUrl: string | null;
   diffContent: string | null;
   serverUrl: string;
+  review: ReviewOutput | null;
 }
 
 async function uploadSession(options: UploadOptions): Promise<void> {
-  const { sessionPath, title, model, harness, repoUrl, diffContent, serverUrl } = options;
+  const { sessionPath, title, model, harness, repoUrl, diffContent, serverUrl, review } = options;
   const sessionContent = await Bun.file(sessionPath).text();
   const sessionId = basename(sessionPath, ".jsonl");
 
@@ -254,6 +367,13 @@ async function uploadSession(options: UploadOptions): Promise<void> {
       new Blob([diffContent], { type: "text/plain" }),
       "changes.diff"
     );
+  }
+
+  // Add review data if present
+  if (review) {
+    formData.append("review_summary", review.summary);
+    formData.append("review_model", review.model);
+    formData.append("annotations", JSON.stringify(review.annotations));
   }
 
   const response = await fetch(`${serverUrl}/api/sessions`, {
@@ -293,6 +413,7 @@ Options:
   --repo          GitHub repository URL (default: auto-detect from git remote)
   --diff, -d      Include git diff (default: true)
   --no-diff       Exclude git diff
+  --review, -r    Generate code review using Claude CLI (requires diff)
   --server        Server URL (default: http://localhost:3000)
   --help, -h      Show this help
     `);
@@ -350,6 +471,16 @@ Options:
     }
   }
 
+  // Generate review if requested (requires diff)
+  let review: ReviewOutput | null = null;
+  if (options.review) {
+    if (!diffContent) {
+      console.error("Cannot generate review without diff content. Use --diff or remove --review.");
+      process.exit(1);
+    }
+    review = await generateReview(diffContent);
+  }
+
   // Upload
   console.log(`Uploading to ${options.server}...`);
   await uploadSession({
@@ -360,6 +491,7 @@ Options:
     repoUrl,
     diffContent,
     serverUrl: options.server,
+    review,
   });
 }
 

@@ -1,4 +1,4 @@
-import type { Session, Message, Diff } from "../db/schema";
+import type { Session, Message, Diff, Review } from "../db/schema";
 import { escapeHtml, renderContentBlocks, buildToolResultMap } from "./blocks";
 import { formatDuration } from "./liveSession";
 
@@ -91,14 +91,19 @@ function renderSessionCard(session: Session): string {
 }
 
 // Session Detail View
+interface ReviewWithCount extends Review {
+  annotation_count: number;
+}
+
 interface SessionDetailData {
   session: Session;
   messages: Message[];
   diffs: Diff[];
   shareUrl: string | null;
+  review?: ReviewWithCount | null;
 }
 
-export function renderSessionDetail({ session, messages, diffs, shareUrl }: SessionDetailData): string {
+export function renderSessionDetail({ session, messages, diffs, shareUrl, review }: SessionDetailData): string {
   const hasDiffs = diffs.length > 0;
   const isLive = session.status === "live";
   // Use two-column layout if there are diffs OR if it's a live session (diffs may come later)
@@ -123,7 +128,7 @@ export function renderSessionDetail({ session, messages, diffs, shareUrl }: Sess
           ${renderConversationPanel(messages)}
 
           <!-- Diffs: sticky sidebar on right -->
-          <div data-diff-panel>${hasDiffs ? renderDiffPanel(diffs) : (isLive ? renderEmptyDiffPlaceholder() : "")}</div>
+          <div data-diff-panel>${hasDiffs ? renderDiffPanel(diffs, review) : (isLive ? renderEmptyDiffPlaceholder() : "")}</div>
         </div>
       </div>
     </div>
@@ -396,7 +401,7 @@ function renderConversationPanel(messages: Message[]): string {
   `;
 }
 
-export function renderDiffPanel(diffs: Diff[]): string {
+export function renderDiffPanel(diffs: Diff[], review?: ReviewWithCount | null): string {
   // Separate diffs by relevance
   const sessionDiffs = diffs.filter((d) => d.is_session_relevant);
   const otherDiffs = diffs.filter((d) => !d.is_session_relevant);
@@ -407,6 +412,7 @@ export function renderDiffPanel(diffs: Diff[]): string {
 
   return `
     <div class="min-w-0">
+      ${review ? renderReviewSummary(review) : ""}
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-sm font-semibold text-text-primary">Code Changes</h2>
         <span class="text-xs text-text-muted tabular-nums">${totalCount} file${totalCount !== 1 ? "s" : ""}</span>
@@ -471,6 +477,30 @@ function renderEmptyDiffPlaceholder(): string {
           No code changes yet
         </div>
       </div>
+    </div>
+  `;
+}
+
+function renderReviewSummary(review: ReviewWithCount): string {
+  return `
+    <div class="bg-bg-secondary border border-bg-elevated rounded-lg overflow-hidden mb-4">
+      <div class="flex items-center justify-between px-4 py-2.5 bg-bg-tertiary border-b border-bg-elevated">
+        <span class="text-sm font-medium text-text-primary flex items-center gap-2">
+          <svg class="w-4 h-4 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+          </svg>
+          Code Review
+        </span>
+        ${review.model ? `<span class="text-xs text-text-muted font-mono">${escapeHtml(review.model)}</span>` : ""}
+      </div>
+      <div class="px-4 py-3 text-sm text-text-secondary leading-relaxed">
+        ${formatMessageContent(review.summary)}
+      </div>
+      ${review.annotation_count > 0 ? `
+        <div class="px-4 py-2 border-t border-bg-elevated text-xs text-text-muted">
+          ${review.annotation_count} annotation${review.annotation_count !== 1 ? "s" : ""}
+        </div>
+      ` : ""}
     </div>
   `;
 }
@@ -626,6 +656,7 @@ function renderDiffBlock(diff: Diff): string {
       </button>
       <div id="${blockId}" class="diff-content ${isCollapsed ? "hidden" : ""}"
            data-diff-content="${escapeHtml(diff.diff_content)}"
+           data-diff-id="${diff.id}"
            data-filename="${escapeHtml(filename)}"
            data-needs-render="${isCollapsed ? "true" : "false"}">
         ${isCollapsed ? "" : '<div class="px-4 py-3 text-text-muted text-sm">Loading diff...</div>'}
