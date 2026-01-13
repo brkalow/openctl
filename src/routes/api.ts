@@ -353,19 +353,22 @@ export function createApiRoutes(repo: SessionRepository) {
     // Patch session (JSON body for partial updates, used by daemon for title updates)
     async patchSession(req: Request, sessionId: string): Promise<Response> {
       try {
-        // Verify stream token if provided (for live sessions)
+        const session = repo.getSession(sessionId);
+        if (!session) {
+          return jsonError("Session not found", 404);
+        }
+
+        // Live sessions require stream token authorization
         const authHeader = req.headers.get("Authorization");
-        if (authHeader?.startsWith("Bearer ")) {
+        if (session.status === "live") {
+          if (!authHeader?.startsWith("Bearer ")) {
+            return jsonError("Authorization required for live sessions", 401);
+          }
           const token = authHeader.slice(7);
           const tokenHash = await hashToken(token);
           if (!repo.verifyStreamToken(sessionId, tokenHash)) {
             return jsonError("Invalid stream token", 401);
           }
-        }
-
-        const session = repo.getSession(sessionId);
-        if (!session) {
-          return jsonError("Session not found", 404);
         }
 
         const body = await req.json();

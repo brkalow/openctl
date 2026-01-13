@@ -25,6 +25,9 @@ const DIFF_DEBOUNCE_MS = 2000;
 /** Tool names that modify files and should trigger diff capture */
 const FILE_MODIFYING_TOOLS = ["Write", "Edit", "NotebookEdit"];
 
+/** Maximum messages to keep in memory after title derivation (to prevent unbounded growth) */
+const MAX_RETAINED_MESSAGES = 10;
+
 interface ActiveSession {
   adapter: HarnessAdapter;
   localPath: string;
@@ -202,6 +205,12 @@ export class SessionTracker {
           // Non-critical, continue
         }
       }
+    }
+
+    // Cap message retention to prevent unbounded memory growth
+    // Once title is derived, we only need recent messages for tool_use pairing
+    if (session.titleDerived && session.parseContext.messages.length > MAX_RETAINED_MESSAGES) {
+      session.parseContext.messages = session.parseContext.messages.slice(-MAX_RETAINED_MESSAGES);
     }
 
     // Check for file-modifying tool calls and schedule diff capture

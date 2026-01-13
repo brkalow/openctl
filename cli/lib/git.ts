@@ -3,11 +3,31 @@
  */
 
 import { $ } from "bun";
+import { join, isAbsolute } from "path";
+import { existsSync } from "fs";
+
+/**
+ * Validate that a path is safe to use in shell commands.
+ * Must be an absolute path that exists and doesn't contain dangerous characters.
+ */
+function isValidProjectPath(projectPath: string): boolean {
+  if (!projectPath || !isAbsolute(projectPath)) {
+    return false;
+  }
+  // Reject paths with shell metacharacters
+  if (/[;&|`$(){}[\]<>!*?#~]/.test(projectPath)) {
+    return false;
+  }
+  return existsSync(projectPath);
+}
 
 /**
  * Check if a directory is a git repository.
  */
 export async function isGitRepo(projectPath: string): Promise<boolean> {
+  if (!isValidProjectPath(projectPath)) {
+    return false;
+  }
   try {
     const result = await $`git -C ${projectPath} rev-parse --git-dir`.quiet();
     return result.exitCode === 0;
@@ -41,7 +61,8 @@ export async function captureGitDiff(projectPath: string): Promise<string | null
       for (const file of files) {
         try {
           // Read file content and generate a "new file" diff
-          const content = await Bun.file(`${projectPath}/${file}`).text();
+          const filePath = join(projectPath, file);
+          const content = await Bun.file(filePath).text();
 
           // Split into lines, handling trailing newline properly
           let lines = content.split("\n");

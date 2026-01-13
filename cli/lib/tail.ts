@@ -1,4 +1,4 @@
-import { watch } from "fs";
+import { watch, statSync } from "fs";
 import { debug } from "./debug";
 
 export class Tail extends EventTarget {
@@ -8,6 +8,7 @@ export class Tail extends EventTarget {
   private pollInterval: ReturnType<typeof setInterval> | null = null;
   private buffer: string = "";
   private pollIntervalMs: number;
+  private isReading: boolean = false;
 
   constructor(filePath: string, options: { startFromEnd?: boolean; pollIntervalMs?: number } = {}) {
     super();
@@ -54,18 +55,33 @@ export class Tail extends EventTarget {
   }
 
   private async readNewContent(): Promise<void> {
+    // Prevent concurrent reads which could cause position issues
+    if (this.isReading) return;
+    this.isReading = true;
+
     try {
-      const file = Bun.file(this.filePath);
-      const size = file.size;
+      // Loop to catch any content added during async read
+      while (true) {
+        // Use statSync for accurate current file size
+        let size: number;
+        try {
+          size = statSync(this.filePath).size;
+        } catch {
+          break; // File may have been deleted
+        }
 
-      if (size < this.position) {
-        // File was truncated
-        this.position = 0;
-        this.buffer = "";
-      }
+        if (size < this.position) {
+          // File was truncated
+          this.position = 0;
+          this.buffer = "";
+        }
 
-      if (size > this.position) {
+        if (size <= this.position) {
+          break; // No new content
+        }
+
         // Read new content using Bun's file API with slice
+        const file = Bun.file(this.filePath);
         const slice = file.slice(this.position, size);
         const content = await slice.text();
         const bytesRead = size - this.position;
@@ -87,6 +103,8 @@ export class Tail extends EventTarget {
       }
     } catch (err) {
       this.dispatchEvent(new CustomEvent("error", { detail: err }));
+    } finally {
+      this.isReading = false;
     }
   }
 

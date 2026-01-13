@@ -23,6 +23,10 @@ export class SessionRepository {
     insertAnnotation: Statement;
     getAnnotationsByDiff: Statement;
     getAnnotationsBySession: Statement;
+    // Live session statements
+    getLiveSessionByHarnessId: Statement;
+    getSessionByHarnessId: Statement;
+    getLiveSessions: Statement;
   };
 
   constructor(private db: Database) {
@@ -74,6 +78,22 @@ export class SessionRepository {
         JOIN reviews r ON a.review_id = r.id
         WHERE r.session_id = ?
       `),
+      // Live session statements
+      getLiveSessionByHarnessId: db.prepare(`
+        SELECT * FROM sessions
+        WHERE claude_session_id = ? AND harness = ? AND status = 'live'
+        ORDER BY created_at DESC
+        LIMIT 1
+      `),
+      getSessionByHarnessId: db.prepare(`
+        SELECT * FROM sessions
+        WHERE claude_session_id = ? AND harness = ?
+        ORDER BY
+          CASE WHEN status = 'live' THEN 0 ELSE 1 END,
+          created_at DESC
+        LIMIT 1
+      `),
+      getLiveSessions: db.prepare("SELECT * FROM sessions WHERE status = 'live' ORDER BY last_activity_at DESC"),
     };
   }
 
@@ -221,13 +241,7 @@ export class SessionRepository {
    * Used to resume streaming to an existing session after daemon restart.
    */
   getLiveSessionByHarnessId(harnessSessionId: string, harness: string): Session | null {
-    const stmt = this.db.prepare(`
-      SELECT * FROM sessions
-      WHERE claude_session_id = ? AND harness = ? AND status = 'live'
-      ORDER BY created_at DESC
-      LIMIT 1
-    `);
-    return stmt.get(harnessSessionId, harness) as Session | null;
+    return this.stmts.getLiveSessionByHarnessId.get(harnessSessionId, harness) as Session | null;
   }
 
   /**
@@ -236,15 +250,7 @@ export class SessionRepository {
    * Prefers live sessions, then archived/completed by most recent.
    */
   getSessionByHarnessId(harnessSessionId: string, harness: string): Session | null {
-    const stmt = this.db.prepare(`
-      SELECT * FROM sessions
-      WHERE claude_session_id = ? AND harness = ?
-      ORDER BY
-        CASE WHEN status = 'live' THEN 0 ELSE 1 END,
-        created_at DESC
-      LIMIT 1
-    `);
-    return stmt.get(harnessSessionId, harness) as Session | null;
+    return this.stmts.getSessionByHarnessId.get(harnessSessionId, harness) as Session | null;
   }
 
   getAllSessions(): Session[] {
@@ -338,8 +344,7 @@ export class SessionRepository {
 
   // Live session methods
   getLiveSessions(): Session[] {
-    const stmt = this.db.prepare("SELECT * FROM sessions WHERE status = 'live' ORDER BY last_activity_at DESC");
-    return stmt.all() as Session[];
+    return this.stmts.getLiveSessions.all() as Session[];
   }
 
   // Get live sessions with message counts in a single query (avoids N+1)
@@ -546,7 +551,10 @@ export class SessionRepository {
         session.project_path,
         session.model,
         session.harness,
-        session.repo_url
+        session.repo_url,
+        session.status || "archived",
+        session.last_activity_at,
+        null // stream_token_hash not used for batch uploads
       ) as Session;
 
       // Insert messages

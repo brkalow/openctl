@@ -197,18 +197,34 @@ export const claudeCodeAdapter: HarnessAdapter = {
 
 /**
  * Decode the project path from the encoded format used in .claude/projects
- * The encoding replaces path separators with hyphens
+ *
+ * Claude Code uses URL encoding for path components:
+ * - "/Users/bryce/my-project" -> "-Users-bryce-my%2Dproject"
+ * - The leading hyphen represents the root /
+ * - Hyphens within path components are encoded as %2D
+ * - Path separators become hyphens
+ *
+ * Fallback: If no URL encoding detected, use simple hyphen replacement
+ * (this may incorrectly decode paths that contain actual hyphens)
  */
 function decodeProjectPath(encoded: string): string {
   if (!encoded) {
     return "";
   }
 
-  // The format typically encodes the full path with hyphens
-  // e.g., "Users-bryce-projects-myapp" -> "/Users/bryce/projects/myapp"
-  const decoded = "/" + encoded.replace(/-/g, "/");
+  // Check if URL encoding is present (look for %XX patterns)
+  if (/%[0-9A-Fa-f]{2}/.test(encoded)) {
+    // URL encoded format: replace hyphens with slashes, then URL decode
+    const withSlashes = "/" + encoded.replace(/-/g, "/");
+    try {
+      return decodeURIComponent(withSlashes);
+    } catch {
+      // Fall through to simple replacement
+    }
+  }
 
-  return decoded;
+  // Simple hyphen replacement (imperfect for paths containing hyphens)
+  return "/" + encoded.replace(/-/g, "/");
 }
 
 /**
