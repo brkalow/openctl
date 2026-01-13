@@ -121,6 +121,17 @@ export function createApiRoutes(repo: SessionRepository) {
       return json({ session, messages, diffs, shareUrl });
     },
 
+    // Get diffs for a session
+    getSessionDiffs(sessionId: string): Response {
+      const session = repo.getSession(sessionId);
+      if (!session) {
+        return jsonError("Session not found", 404);
+      }
+
+      const diffs = repo.getDiffs(sessionId);
+      return json({ diffs });
+    },
+
     // Get shared session detail
     getSharedSessionDetail(shareToken: string, baseUrl?: string): Response {
       const session = repo.getSessionByShareToken(shareToken);

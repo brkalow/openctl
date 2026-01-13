@@ -1,5 +1,5 @@
 import { Router } from "./router";
-import { renderSessionList, renderSessionDetail, renderNotFound, renderSingleMessage, renderConnectionStatusHtml } from "./views";
+import { renderSessionList, renderSessionDetail, renderNotFound, renderSingleMessage, renderConnectionStatusHtml, renderDiffPanel } from "./views";
 import type { Session, Message, Diff } from "../db/schema";
 // Import @pierre/diffs - this registers the web component and provides FileDiff class
 import { FileDiff, getSingularPatch, File } from "@pierre/diffs";
@@ -82,6 +82,13 @@ async function fetchSharedSession(shareToken: string): Promise<SessionDetailData
   const res = await fetch(`/api/s/${encodeURIComponent(shareToken)}`);
   if (!res.ok) return null;
   return res.json();
+}
+
+async function fetchDiffs(sessionId: string): Promise<Diff[]> {
+  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/diffs`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.diffs || [];
 }
 
 // Route handlers
@@ -634,15 +641,21 @@ function initializeLiveSession(sessionId: string, initialMessages: Message[]): v
       }
     },
 
-    onDiff: (_files) => {
-      // Flash the diff panel to indicate update
-      const diffPanel = document.getElementById("diffs-container");
-      if (diffPanel) {
-        diffPanel.classList.add("diff-update-flash");
-        setTimeout(() => diffPanel.classList.remove("diff-update-flash"), 500);
+    onDiff: async (_files) => {
+      // Fetch and re-render diffs
+      const diffs = await fetchDiffs(sessionId);
+      const diffPanelContainer = document.querySelector('[data-diff-panel]');
+      if (diffPanelContainer) {
+        diffPanelContainer.innerHTML = renderDiffPanel(diffs);
+        // Re-attach diff toggle handlers
+        attachDiffToggleHandlers();
+        // Flash to indicate update
+        const newDiffPanel = document.getElementById("diffs-container");
+        if (newDiffPanel) {
+          newDiffPanel.classList.add("diff-update-flash");
+          setTimeout(() => newDiffPanel.classList.remove("diff-update-flash"), 500);
+        }
       }
-      // Note: Full diff re-render would require refetching session data
-      // For now, just indicate that diffs have changed
     },
 
     onComplete: () => {

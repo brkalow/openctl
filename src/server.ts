@@ -56,6 +56,10 @@ const server = Bun.serve({
       GET: (req) => api.getSessionJson(req.params.id),
     },
 
+    "/api/sessions/:id/diffs": {
+      GET: (req) => api.getSessionDiffs(req.params.id),
+    },
+
     "/api/s/:shareToken": {
       GET: (req) => {
         const url = new URL(req.url);

@@ -100,6 +100,9 @@ interface SessionDetailData {
 
 export function renderSessionDetail({ session, messages, diffs, shareUrl }: SessionDetailData): string {
   const hasDiffs = diffs.length > 0;
+  const isLive = session.status === "live";
+  // Use two-column layout if there are diffs OR if it's a live session (diffs may come later)
+  const useTwoColumnLayout = hasDiffs || isLive;
   const date = formatDate(session.created_at);
 
   const resumeCommand = session.claude_session_id
@@ -115,12 +118,12 @@ export function renderSessionDetail({ session, messages, diffs, shareUrl }: Sess
 
       <!-- Content -->
       <div class="max-w-[1800px] mx-auto px-6 lg:px-10 py-6">
-        <div class="${hasDiffs ? "grid grid-cols-1 lg:grid-cols-[2fr_3fr] gap-6" : "max-w-4xl"}">
+        <div class="${useTwoColumnLayout ? "grid grid-cols-1 lg:grid-cols-[2fr_3fr] gap-6" : "max-w-4xl"}">
           <!-- Conversation: main content, scrolls with page -->
           ${renderConversationPanel(messages)}
 
           <!-- Diffs: sticky sidebar on right -->
-          ${hasDiffs ? renderDiffPanel(diffs) : ""}
+          <div data-diff-panel>${hasDiffs ? renderDiffPanel(diffs) : (isLive ? renderEmptyDiffPlaceholder() : "")}</div>
         </div>
       </div>
     </div>
@@ -393,7 +396,7 @@ function renderConversationPanel(messages: Message[]): string {
   `;
 }
 
-function renderDiffPanel(diffs: Diff[]): string {
+export function renderDiffPanel(diffs: Diff[]): string {
   // Separate diffs by relevance
   const sessionDiffs = diffs.filter((d) => d.is_session_relevant);
   const otherDiffs = diffs.filter((d) => !d.is_session_relevant);
@@ -451,6 +454,22 @@ function renderDiffPanel(diffs: Diff[]): string {
         `
             : ""
         }
+      </div>
+    </div>
+  `;
+}
+
+function renderEmptyDiffPlaceholder(): string {
+  return `
+    <div class="min-w-0">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-sm font-semibold text-text-primary">Code Changes</h2>
+        <span class="text-xs text-text-muted tabular-nums">0 files</span>
+      </div>
+      <div id="diffs-container" class="bg-bg-secondary border border-bg-elevated rounded-lg">
+        <div class="flex items-center justify-center h-full text-text-muted text-sm py-8">
+          No code changes yet
+        </div>
       </div>
     </div>
   `;
