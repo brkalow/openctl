@@ -687,7 +687,8 @@ export class SessionRepository {
         content: string;
       }>;
     },
-    clientId?: string
+    clientId?: string,
+    touchedFiles?: Set<string>
   ): { session: Session; isUpdate: boolean } {
     const transaction = this.db.transaction(() => {
       // Check if session with this claude_session_id already exists
@@ -715,10 +716,68 @@ export class SessionRepository {
           repo_url: session.repo_url,
         }) as Session;
 
+        // Get existing diffs before clearing (for smart diff preservation)
+        const existingDiffs = this.getDiffs(sessionId);
+        const existingDiffsByFilename = new Map<string, Diff>();
+        for (const d of existingDiffs) {
+          if (d.filename) {
+            existingDiffsByFilename.set(d.filename, d);
+          }
+        }
+
+        // Build set of filenames covered by new diffs
+        const newDiffFilenames = new Set<string>();
+        for (const d of diffs) {
+          if (d.filename) {
+            newDiffFilenames.add(d.filename);
+          }
+        }
+
         // Clear existing messages, diffs, and reviews
         this.stmts.clearMessages.run(sessionId);
         this.stmts.clearDiffs.run(sessionId);
         this.stmts.clearReview.run(sessionId);
+
+        // Preserve existing diffs for touched files not covered by new diffs
+        // This prevents losing diffs when re-uploading after commits
+        if (touchedFiles && touchedFiles.size > 0) {
+          for (const touchedFile of touchedFiles) {
+            // Normalize the touched file path for comparison
+            const normalizedTouched = touchedFile.replace(/^\.\//, "").replace(/\/+/g, "/");
+
+            // Check if this touched file is NOT covered by new diffs
+            const isCoveredByNewDiff = Array.from(newDiffFilenames).some(newFile => {
+              const normalizedNew = newFile.replace(/^\.\//, "").replace(/\/+/g, "/");
+              return normalizedNew === normalizedTouched ||
+                     normalizedNew.endsWith("/" + normalizedTouched) ||
+                     normalizedTouched.endsWith("/" + normalizedNew);
+            });
+
+            if (!isCoveredByNewDiff) {
+              // Check if existing diffs cover this file
+              for (const [existingFilename, existingDiff] of existingDiffsByFilename) {
+                const normalizedExisting = existingFilename.replace(/^\.\//, "").replace(/\/+/g, "/");
+                const matches = normalizedExisting === normalizedTouched ||
+                               normalizedExisting.endsWith("/" + normalizedTouched) ||
+                               normalizedTouched.endsWith("/" + normalizedExisting);
+
+                if (matches) {
+                  // Preserve this existing diff - add it to the diffs array
+                  diffs.push({
+                    session_id: sessionId,
+                    filename: existingDiff.filename,
+                    diff_content: existingDiff.diff_content,
+                    diff_index: diffs.length, // Append at end
+                    additions: existingDiff.additions,
+                    deletions: existingDiff.deletions,
+                    is_session_relevant: existingDiff.is_session_relevant,
+                  });
+                  break;
+                }
+              }
+            }
+          }
+        }
       } else {
         // Create new session
         resultSession = this.stmts.createSession.get(
