@@ -5,8 +5,12 @@
 import { $ } from "bun";
 import { existsSync } from "fs";
 import { basename, join } from "path";
+import { Glob } from "bun";
 import { getClientId } from "../lib/client-id";
 import { loadConfig } from "../lib/config";
+
+// UUID v4 pattern
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Review types
 interface ReviewAnnotation {
@@ -120,20 +124,161 @@ async function findCurrentSession(): Promise<string | null> {
   return sessionPath;
 }
 
-async function getGitDiff(): Promise<string | null> {
-  try {
-    // Get diff of all changes (staged and unstaged) compared to main/master
-    const baseBranch =
-      (await $`git rev-parse --verify main 2>/dev/null`.text().catch(() => "")) ||
-      (await $`git rev-parse --verify master 2>/dev/null`.text().catch(() => ""));
+async function findSessionByUuid(uuid: string): Promise<string | null> {
+  // Search all Claude project directories for a session file with this UUID
+  const claudeProjectsDir = join(Bun.env.HOME || "~", ".claude/projects");
 
-    if (baseBranch.trim()) {
-      const diff = await $`git diff ${baseBranch.trim()}...HEAD`.text();
-      if (diff.trim()) return diff;
+  if (!existsSync(claudeProjectsDir)) {
+    console.error(`Claude projects directory not found: ${claudeProjectsDir}`);
+    return null;
+  }
+
+  const glob = new Glob(`*/${uuid}.jsonl`);
+  for await (const file of glob.scan({ cwd: claudeProjectsDir, absolute: true })) {
+    return file;
+  }
+
+  console.error(`No session file found for UUID: ${uuid}`);
+  console.error(`Searched in: ${claudeProjectsDir}/*/`);
+  return null;
+}
+
+function extractProjectPathFromSessionPath(sessionPath: string): string | null {
+  // Extract project path from session file path
+  // e.g., /Users/bryce/.claude/projects/-Users-bryce-code-foo/session.jsonl
+  //       -> /Users/bryce/code/foo
+  //
+  // The challenge is that hyphens can be either:
+  // 1. Path separators (should become /)
+  // 2. Part of folder names (should stay -)
+  //
+  // We use a greedy approach: try the most specific path first,
+  // then progressively try combining path segments until we find one that exists.
+
+  const dir = basename(sessionPath.replace(/\/[^/]+\.jsonl$/, ""));
+  if (!dir.startsWith("-")) {
+    return null;
+  }
+
+  // Split by hyphens and try to find the actual path
+  const parts = dir.slice(1).split("-"); // Remove leading dash and split
+
+  // Try building paths by progressively joining segments with hyphens
+  // Start with all slashes, then try combining from the end
+  function tryPaths(segments: string[], start: number): string | null {
+    if (start >= segments.length) {
+      const path = "/" + segments.join("/");
+      return existsSync(path) ? path : null;
     }
 
+    // Try with slash at this position
+    const withSlash = tryPaths(segments, start + 1);
+    if (withSlash) return withSlash;
+
+    // Try combining this segment with the next using hyphen
+    if (start + 1 < segments.length) {
+      const combined = [...segments];
+      combined[start] = combined[start] + "-" + combined[start + 1];
+      combined.splice(start + 1, 1);
+      const withHyphen = tryPaths(combined, start + 1);
+      if (withHyphen) return withHyphen;
+    }
+
+    return null;
+  }
+
+  const result = tryPaths(parts, 0);
+  if (result) return result;
+
+  // Fallback: just convert all hyphens to slashes (may not exist)
+  return "/" + parts.join("/");
+}
+
+async function getPrBaseBranch(projectDir: string, headBranch: string): Promise<string | null> {
+  try {
+    // Use gh CLI to find PR with this head branch and get its base
+    const result = await $`gh pr list --head ${headBranch} --json baseRefName --limit 1`.cwd(projectDir).text();
+    const prs = JSON.parse(result.trim() || "[]");
+    if (prs.length > 0 && prs[0].baseRefName) {
+      return prs[0].baseRefName;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function getGitDiff(projectDir?: string, branch?: string, touchedFiles?: string[]): Promise<string | null> {
+  const cwd = projectDir || process.cwd();
+
+  // Check if directory exists
+  if (projectDir && !existsSync(projectDir)) {
+    console.log(`Project directory not found: ${projectDir}`);
+    return null;
+  }
+
+  try {
+    // Try to get base branch from PR if we have a branch name
+    let baseBranch: string | null = null;
+    if (branch && projectDir) {
+      baseBranch = await getPrBaseBranch(projectDir, branch);
+      if (baseBranch) {
+        console.log(`PR base branch: ${baseBranch}`);
+      }
+    }
+
+    // Fall back to main or master
+    if (!baseBranch) {
+      baseBranch =
+        (await $`git -C ${cwd} rev-parse --verify main 2>/dev/null`.text().catch(() => "")).trim() ||
+        (await $`git -C ${cwd} rev-parse --verify master 2>/dev/null`.text().catch(() => "")).trim();
+    }
+
+    if (!baseBranch) {
+      console.log("No base branch found");
+      return null;
+    }
+
+    // Build file filter args if we have touched files
+    const fileArgs = touchedFiles && touchedFiles.length > 0 ? ["--", ...touchedFiles] : [];
+    const hasFileFilter = fileArgs.length > 0;
+
+    // If a specific branch was provided (from session metadata), use it
+    if (branch) {
+      // Check if the branch exists locally
+      const branchExists = await $`git -C ${cwd} rev-parse --verify refs/heads/${branch} 2>/dev/null`.text().catch(() => "");
+      if (branchExists.trim()) {
+        console.log(`Using session branch: ${branch}${hasFileFilter ? ` (filtered to ${touchedFiles!.length} files)` : ""}`);
+        const diff = hasFileFilter
+          ? await $`git -C ${cwd} diff ${baseBranch}...${branch} ${fileArgs}`.text()
+          : await $`git -C ${cwd} diff ${baseBranch}...${branch}`.text();
+        if (diff.trim()) return diff;
+      } else {
+        // Try remote branch
+        const remoteBranchExists = await $`git -C ${cwd} rev-parse --verify refs/remotes/origin/${branch} 2>/dev/null`.text().catch(() => "");
+        if (remoteBranchExists.trim()) {
+          console.log(`Using remote session branch: origin/${branch}${hasFileFilter ? ` (filtered to ${touchedFiles!.length} files)` : ""}`);
+          const diff = hasFileFilter
+            ? await $`git -C ${cwd} diff ${baseBranch}...origin/${branch} ${fileArgs}`.text()
+            : await $`git -C ${cwd} diff ${baseBranch}...origin/${branch}`.text();
+          if (diff.trim()) return diff;
+        } else {
+          console.log(`Session branch '${branch}' no longer exists (may have been merged or deleted)`);
+          return null;
+        }
+      }
+    }
+
+    // Fall back to current HEAD diff (for non-UUID uploads from cwd)
+    const diff = hasFileFilter
+      ? await $`git -C ${cwd} diff ${baseBranch}...HEAD ${fileArgs}`.text()
+      : await $`git -C ${cwd} diff ${baseBranch}...HEAD`.text();
+    if (diff.trim()) return diff;
+
     // Fall back to uncommitted changes
-    const uncommitted = await $`git diff HEAD`.text();
+    const uncommitted = hasFileFilter
+      ? await $`git -C ${cwd} diff HEAD ${fileArgs}`.text()
+      : await $`git -C ${cwd} diff HEAD`.text();
     if (uncommitted.trim()) return uncommitted;
 
     return null;
@@ -142,9 +287,10 @@ async function getGitDiff(): Promise<string | null> {
   }
 }
 
-async function getRepoUrl(): Promise<string | null> {
+async function getRepoUrl(projectDir?: string): Promise<string | null> {
+  const cwd = projectDir || process.cwd();
   try {
-    const remote = await $`git remote get-url origin 2>/dev/null`.text();
+    const remote = await $`git -C ${cwd} remote get-url origin 2>/dev/null`.text();
     const url = remote.trim();
     if (!url) return null;
 
@@ -276,6 +422,58 @@ function extractModel(sessionContent: string): string | null {
   return null;
 }
 
+function extractGitBranch(sessionContent: string): string | null {
+  // Parse JSONL and look for gitBranch in message metadata
+  const lines = sessionContent.split("\n").filter(Boolean);
+
+  for (const line of lines) {
+    try {
+      const item = JSON.parse(line);
+      if (item.gitBranch) return item.gitBranch;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function extractTouchedFiles(sessionContent: string, projectPath?: string): string[] {
+  // Parse JSONL and look for Write/Edit/NotebookEdit tool_use blocks
+  const files = new Set<string>();
+  const lines = sessionContent.split("\n").filter(Boolean);
+
+  for (const line of lines) {
+    try {
+      const item = JSON.parse(line);
+      const msg = item.message || item;
+      const content = msg.content;
+
+      if (!Array.isArray(content)) continue;
+
+      for (const block of content) {
+        if (block.type === "tool_use" && ["Write", "Edit", "NotebookEdit"].includes(block.name)) {
+          const input = block.input as Record<string, unknown>;
+          let path = (input.file_path || input.notebook_path) as string;
+          if (path) {
+            // Make path relative to project if it's absolute
+            if (projectPath && path.startsWith(projectPath)) {
+              path = path.slice(projectPath.length + 1);
+            }
+            // Normalize path
+            path = path.replace(/^\.\//, "").replace(/\/+/g, "/");
+            files.add(path);
+          }
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return Array.from(files);
+}
+
 function countMessages(sessionContent: string): number {
   // Count actual user/assistant messages (not metadata like file-history-snapshot)
   const lines = sessionContent.split("\n").filter(Boolean);
@@ -346,17 +544,18 @@ interface UploadOptions {
   diffContent: string | null;
   serverUrl: string;
   review: ReviewOutput | null;
+  projectPath: string;
 }
 
 async function uploadSession(options: UploadOptions): Promise<void> {
-  const { sessionPath, title, model, harness, repoUrl, diffContent, serverUrl, review } = options;
+  const { sessionPath, title, model, harness, repoUrl, diffContent, serverUrl, review, projectPath } = options;
   const sessionContent = await Bun.file(sessionPath).text();
   const sessionId = basename(sessionPath, ".jsonl");
 
   const formData = new FormData();
   formData.append("title", title);
   formData.append("claude_session_id", sessionId);
-  formData.append("project_path", process.cwd());
+  formData.append("project_path", projectPath);
   formData.append("harness", harness);
 
   if (model) {
@@ -420,7 +619,8 @@ Usage:
   archive upload [options]
 
 Options:
-  --session, -s   Path to session JSONL file (default: auto-detect current session)
+  --session, -s   Session UUID or path to JSONL file (default: auto-detect current session)
+                  Can be a UUID like "c28995d0-7cba-4974-8268-32b94ac183a4" or a file path
   --title, -t     Session title (default: derived from first user message)
   --model, -m     Model used (default: auto-detect from session)
   --harness       Harness/client used (default: "Claude Code")
@@ -449,6 +649,14 @@ export async function upload(args: string[]): Promise<void> {
     if (!sessionPath) {
       process.exit(1);
     }
+  } else if (UUID_PATTERN.test(sessionPath)) {
+    // Session is a UUID, look it up in ~/.claude/projects/*/
+    console.log(`Looking up session by UUID: ${sessionPath}`);
+    const foundPath = await findSessionByUuid(sessionPath);
+    if (!foundPath) {
+      process.exit(1);
+    }
+    sessionPath = foundPath;
   }
 
   if (!existsSync(sessionPath)) {
@@ -457,6 +665,14 @@ export async function upload(args: string[]): Promise<void> {
   }
 
   console.log(`Session: ${sessionPath}`);
+
+  // Extract project path from session path (for UUID-based lookups)
+  // This is the directory where the session was created
+  const extractedProjectPath = extractProjectPathFromSessionPath(sessionPath);
+  const projectPath = extractedProjectPath || process.cwd();
+  if (extractedProjectPath) {
+    console.log(`Project: ${extractedProjectPath}`);
+  }
 
   // Read session content
   const sessionContent = await Bun.file(sessionPath).text();
@@ -479,20 +695,36 @@ export async function upload(args: string[]): Promise<void> {
     console.log(`Model: ${model}`);
   }
 
+  // Extract git branch from session metadata
+  const gitBranch = extractGitBranch(sessionContent);
+  if (gitBranch) {
+    console.log(`Branch: ${gitBranch}`);
+  }
+
   // Harness (defaults to "Claude Code")
   console.log(`Harness: ${options.harness}`);
 
-  // Get repo URL
-  const repoUrl = options.repo || (await getRepoUrl());
+  // Get repo URL (use extracted project path if available)
+  const repoUrl = options.repo || (await getRepoUrl(extractedProjectPath || undefined));
   if (repoUrl) {
     console.log(`Repo: ${repoUrl}`);
   }
 
-  // Get git diff if requested
+  // Extract files touched by the session (for filtering diff)
+  const touchedFiles = extractTouchedFiles(sessionContent, extractedProjectPath || undefined);
+  if (touchedFiles.length > 0) {
+    console.log(`Touched files: ${touchedFiles.length}`);
+  }
+
+  // Get git diff if requested (use extracted project path, branch, and touched files)
   let diffContent: string | null = null;
   if (options.diff) {
     console.log("Getting git diff...");
-    diffContent = await getGitDiff();
+    diffContent = await getGitDiff(
+      extractedProjectPath || undefined,
+      gitBranch || undefined,
+      touchedFiles.length > 0 ? touchedFiles : undefined
+    );
     if (diffContent) {
       console.log(`Diff: ${diffContent.split("\n").length} lines`);
     } else {
@@ -521,5 +753,6 @@ export async function upload(args: string[]): Promise<void> {
     diffContent,
     serverUrl: options.server,
     review,
+    projectPath,
   });
 }

@@ -130,7 +130,7 @@ export function SessionDetail({ session, messages, diffs, shareUrl }: SessionDet
       </div>
 
       <!-- Content panels -->
-      <div class="${hasDiffs ? "grid lg:grid-cols-2 gap-6" : ""}">
+      <div class="${hasDiffs ? "session-content-grid two-column" : ""}">
         <!-- Chat panel -->
         <div class="panel">
           <div class="panel-header">
