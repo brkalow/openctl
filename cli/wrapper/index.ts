@@ -75,10 +75,9 @@ export async function startWrapper(options: WrapperOptions): Promise<number> {
   }, debug);
 
   // Function to inject text into the terminal (final submission)
-  const injectText = (content: string, source?: string) => {
+  const injectText = (content: string, _source?: string) => {
     if (writeToTerminal && currentState === "waiting") {
-      const prefix = source ? `[Remote: ${source}] ` : "";
-      writeToTerminal(prefix + content + "\n");
+      writeToTerminal(content + "\n");
       currentState = "running";
     }
   };
@@ -87,7 +86,7 @@ export async function startWrapper(options: WrapperOptions): Promise<number> {
   const showInInput = (msg: PendingMessage) => {
     if (writeToTerminal && currentState === "waiting") {
       // Write to input but don't submit (no Enter) - user decides
-      writeToTerminal(`[Remote: ${msg.source}] ${msg.content}`);
+      writeToTerminal(msg.content);
       pendingInInput = msg;
       log("populated input with remote message");
       // Mark as approved since we're showing it - rejection is just clearing
