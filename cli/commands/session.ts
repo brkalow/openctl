@@ -10,6 +10,8 @@ export async function session(args: string[]): Promise<void> {
       return sessionList(args.slice(1));
     case "delete":
       return sessionDelete(args.slice(1));
+    case "start":
+      return sessionStart(args.slice(1));
     default:
       showHelp();
   }
@@ -22,6 +24,7 @@ Usage: archive session <subcommand> [options]
 Subcommands:
   list              List sessions on the server
   delete <id>       Delete a session
+  start "<prompt>"  Start an interactive session with Claude
 
 Options for 'list':
   --mine            Only show sessions uploaded by this client
@@ -34,10 +37,16 @@ Options for 'delete':
   --force           Skip confirmation prompt
   --server <url>    Server URL (default: from config)
 
+Options for 'start':
+  --title <text>       Session title
+  --approval <mode>    Approval mode: ask (default), auto, reject
+  --server <url>       Server URL (default: from config)
+
 Examples:
   archive session list              # List recent sessions
   archive session list --mine       # List only my sessions
   archive session delete abc123     # Delete a session
+  archive session start "fix the bug in auth.ts"  # Start interactive session
   `);
 }
 
@@ -177,4 +186,34 @@ async function readLine(): Promise<string> {
     return "";
   }
   return decoder.decode(value).trim();
+}
+
+async function sessionStart(args: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args,
+    options: {
+      server: { type: "string" },
+      title: { type: "string" },
+      approval: { type: "string" },
+    },
+    allowPositionals: true,
+  });
+
+  const prompt = positionals.join(" ");
+  if (!prompt) {
+    console.error("Error: Prompt is required");
+    console.log('Usage: archive session start "<prompt>" [options]');
+    process.exit(1);
+  }
+
+  // Delegate to start command
+  const { start } = await import("./start");
+  await start([
+    ...(values.server ? ["--server", values.server] : []),
+    ...(values.title ? ["--title", values.title] : []),
+    ...(values.approval ? ["--approval", values.approval] : []),
+    "--",
+    "claude",
+    prompt,
+  ]);
 }

@@ -21,6 +21,7 @@
   "dependencies": {
     "@pierre/diffs": "^1.0.4",
     "bun-plugin-tailwind": "^0.1.2",
+    "node-pty": "^1.1.0",
     "tailwindcss": "^4.1.18"
   }
 }

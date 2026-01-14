@@ -828,14 +828,14 @@ describe("StateDetector", () => {
 
 ## Checklist
 
-- [ ] Create `cli/wrapper/types.ts`
-- [ ] Create `cli/wrapper/state-detector.ts`
-- [ ] Create `cli/wrapper/server-connection.ts`
-- [ ] Create `cli/wrapper/approval.ts`
-- [ ] Create `cli/wrapper/index.ts`
-- [ ] Create `cli/wrapper/platform.ts`
-- [ ] Create `cli/commands/wrap.ts`
-- [ ] Update `cli/commands/session.ts` with `start` subcommand
-- [ ] Update `cli/index.ts` to register `wrap` command
-- [ ] Add unit tests for state detector
-- [ ] Manual testing with live server
+- [x] Create `cli/wrapper/types.ts`
+- [x] Create `cli/wrapper/state-detector.ts`
+- [x] Create `cli/wrapper/server-connection.ts`
+- [x] Create `cli/wrapper/approval.ts`
+- [x] Create `cli/wrapper/index.ts`
+- [x] Create `cli/wrapper/platform.ts`
+- [x] Create `cli/commands/start.ts` (renamed from wrap.ts)
+- [x] Update `cli/commands/session.ts` with `start` subcommand
+- [x] Update `cli/index.ts` to register `start` command
+- [x] Add unit tests for state detector and approval manager
+- [x] Manual testing with mock server

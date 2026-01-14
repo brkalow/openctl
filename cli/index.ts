@@ -9,6 +9,7 @@
  *   config    Manage CLI configuration
  *   repo      Manage repository access control
  *   session   Manage sessions (list/delete)
+ *   start     Start an interactive Claude session
  *   list      Alias for 'session list'
  */
 
@@ -17,6 +18,7 @@ import { upload } from "./commands/upload";
 import { config } from "./commands/config";
 import { repo } from "./commands/repo";
 import { session } from "./commands/session";
+import { start } from "./commands/start";
 
 const commands: Record<string, (args: string[]) => Promise<void>> = {
   daemon,
@@ -24,6 +26,7 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
   config,
   repo,
   session,
+  start,
   list: (args) => session(["list", ...args]),
 };
 
@@ -40,6 +43,7 @@ Commands:
   config    Manage CLI configuration
   repo      Manage repository access control
   session   Manage sessions (list/delete)
+  start     Start an interactive Claude session
   list      Alias for 'session list'
 
 Run 'archive <command> --help' for more information.
