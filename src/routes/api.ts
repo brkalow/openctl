@@ -966,6 +966,16 @@ function closeSessionConnections(sessionId: string): void {
   sessionSubscribers.delete(sessionId);
 }
 
+// Close all WebSocket connections (for graceful shutdown)
+export function closeAllConnections(): void {
+  for (const [sessionId, subscribers] of sessionSubscribers) {
+    for (const ws of subscribers) {
+      ws.close(1001, "Server shutting down");
+    }
+  }
+  sessionSubscribers.clear();
+}
+
 function generateId(): string {
   const timestamp = Date.now().toString(36);
   const randomPart = crypto.randomUUID().replace(/-/g, "").substring(0, 8);

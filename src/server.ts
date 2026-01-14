@@ -1,6 +1,6 @@
 import { initializeDatabase } from "./db/schema";
 import { SessionRepository } from "./db/repository";
-import { createApiRoutes, addSessionSubscriber, removeSessionSubscriber } from "./routes/api";
+import { createApiRoutes, addSessionSubscriber, removeSessionSubscriber, closeAllConnections } from "./routes/api";
 
 // Import HTML template - Bun will bundle CSS and JS referenced in this file
 import homepage from "../public/index.html";
@@ -186,3 +186,35 @@ const server = Bun.serve({
 });
 
 console.log(`Claude Session Archive running at http://${HOST}:${server.port}`);
+
+// Graceful shutdown handling
+let isShuttingDown = false;
+
+async function gracefulShutdown(signal: string) {
+  if (isShuttingDown) {
+    console.log("Shutdown already in progress...");
+    return;
+  }
+  isShuttingDown = true;
+
+  console.log(`\nReceived ${signal}, shutting down gracefully...`);
+
+  // Close all WebSocket connections
+  console.log("Closing WebSocket connections...");
+  closeAllConnections();
+
+  // Stop accepting new connections and close existing ones
+  console.log("Stopping server...");
+  server.stop();
+
+  // Close database connection
+  console.log("Closing database...");
+  db.close();
+
+  console.log("Shutdown complete.");
+  process.exit(0);
+}
+
+// Handle termination signals
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
