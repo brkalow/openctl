@@ -51,6 +51,15 @@ interface ActiveSession {
   modifiedFiles: Set<string>;
 }
 
+/**
+ * Result of attempting to start a session.
+ * - 'started': Session was created and is being tracked
+ * - 'already_tracking': Session was already being tracked
+ * - 'retry_later': File is empty/invalid, should retry on future changes
+ * - 'skip': Permanently skip (e.g., repo not in allowlist)
+ */
+export type StartSessionResult = 'started' | 'already_tracking' | 'retry_later' | 'skip';
+
 export class SessionTracker {
   private sessions = new Map<string, ActiveSession>();
   private api: ApiClient;
@@ -106,9 +115,9 @@ export class SessionTracker {
     }
   }
 
-  async startSession(filePath: string, adapter: HarnessAdapter): Promise<void> {
+  async startSession(filePath: string, adapter: HarnessAdapter): Promise<StartSessionResult> {
     if (this.sessions.has(filePath)) {
-      return; // Already tracking
+      return 'already_tracking';
     }
 
     const sessionInfo = adapter.getSessionInfo(filePath);
@@ -123,14 +132,14 @@ export class SessionTracker {
       console.log(`To allow this repository, run:`);
       console.log(`  archive repo allow ${sessionInfo.projectPath}`);
       console.log();
-      return;
+      return 'skip';
     }
 
     // Check if the session file has any parseable content
     // Skip empty files to avoid creating empty server sessions
     if (!(await this.sessionFileHasContent(filePath))) {
       debug(`Skipping empty session file: ${filePath}`);
-      return;
+      return 'retry_later';
     }
 
     console.log(`[${adapter.name}] Session detected: ${filePath}`);
@@ -203,8 +212,11 @@ export class SessionTracker {
           // Non-critical, continue
         });
       }
+
+      return 'started';
     } catch (err) {
       console.error(`  Failed to create session:`, err);
+      return 'retry_later'; // Server error, may succeed later
     }
   }
 

@@ -8,7 +8,7 @@
 import { existsSync, readdirSync, statSync, watch, type FSWatcher } from "fs";
 import { join } from "path";
 import type { HarnessAdapter } from "../adapters/types";
-import { SessionTracker } from "./session-tracker";
+import { SessionTracker, type StartSessionResult } from "./session-tracker";
 
 export class SessionWatcher {
   private watchers: FSWatcher[] = [];
@@ -55,17 +55,36 @@ export class SessionWatcher {
         if (eventType === "rename") {
           // File created or deleted
           if (existsSync(fullPath) && !this.knownFiles.has(fullPath)) {
-            this.knownFiles.add(fullPath);
-            this.tracker.startSession(fullPath, adapter);
+            this.tryStartSession(fullPath, adapter);
           } else if (!existsSync(fullPath) && this.knownFiles.has(fullPath)) {
             this.knownFiles.delete(fullPath);
             this.tracker.endSession(fullPath);
+          }
+        } else if (eventType === "change") {
+          // File content changed - try to start tracking if not already
+          // This handles the case where a session was initially skipped
+          // (e.g., empty or no valid messages) but now has content
+          if (existsSync(fullPath) && !this.knownFiles.has(fullPath)) {
+            this.tryStartSession(fullPath, adapter);
           }
         }
       }
     );
 
     this.watchers.push(watcher);
+  }
+
+  /**
+   * Try to start a session and only mark as known if we should stop retrying.
+   * Files that return 'retry_later' will be retried on subsequent changes.
+   */
+  private async tryStartSession(filePath: string, adapter: HarnessAdapter): Promise<void> {
+    const result = await this.tracker.startSession(filePath, adapter);
+    // Only add to knownFiles if we shouldn't retry
+    // 'retry_later' means file is empty/invalid but may have content later
+    if (result !== 'retry_later') {
+      this.knownFiles.add(filePath);
+    }
   }
 
   private scanExistingFiles(dirPath: string, adapter: HarnessAdapter): void {
@@ -91,10 +110,10 @@ export class SessionWatcher {
 
         // Consider files modified in the last 5 minutes as potentially active
         if (ageMs < 5 * 60 * 1000) {
-          this.knownFiles.add(fullPath);
           // Auto-start tracking for recent sessions
-          console.log(`  Found recent session, starting: ${fullPath}`);
-          this.tracker.startSession(fullPath, adapter);
+          console.log(`  Found recent session, attempting: ${fullPath}`);
+          // Fire-and-forget: tryStartSession handles adding to knownFiles based on result
+          this.tryStartSession(fullPath, adapter);
         }
       }
     }

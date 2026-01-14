@@ -11,6 +11,7 @@ import {
   type WrapperWebSocketData,
 } from "./routes/wrapper-connections";
 import { handleBrowserMessage } from "./routes/browser-messages";
+import { handleGetPendingFeedback, handleMarkFeedbackDelivered, handleGetPendingFeedbackByClaudeSession } from "./routes/feedback-api";
 import type { BrowserToServerMessage } from "./routes/websocket-types";
 
 // Import HTML template - Bun will bundle CSS and JS referenced in this file
@@ -107,6 +108,20 @@ const server = Bun.serve({
 
     "/api/sessions/:id/complete": {
       POST: (req) => api.completeSession(req, req.params.id),
+    },
+
+    // Feedback API endpoints for plugin-based interactive sessions
+    // Note: by-claude-session route must come before :id routes to avoid matching conflicts
+    "/api/sessions/by-claude-session/:claudeSessionId/feedback/pending": {
+      GET: (req) => handleGetPendingFeedbackByClaudeSession(req.params.claudeSessionId, repo),
+    },
+
+    "/api/sessions/:id/feedback/pending": {
+      GET: (req) => handleGetPendingFeedback(req.params.id, repo),
+    },
+
+    "/api/sessions/:id/feedback/:messageId/delivered": {
+      POST: (req) => handleMarkFeedbackDelivered(req.params.id, req.params.messageId, repo),
     },
   },
 

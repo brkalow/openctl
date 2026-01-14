@@ -167,7 +167,7 @@ export type Session = {
 
 // Feedback message types for interactive sessions
 export type FeedbackMessageType = "message" | "diff_comment" | "suggested_edit";
-export type FeedbackMessageStatus = "pending" | "approved" | "rejected" | "expired";
+export type FeedbackMessageStatus = "pending" | "delivered" | "approved" | "rejected" | "expired";
 
 export type FeedbackMessage = {
   id: string;
