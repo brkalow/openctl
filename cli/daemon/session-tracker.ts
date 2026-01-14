@@ -14,8 +14,9 @@ import type {
   ParseContext,
   NormalizedMessage,
 } from "../adapters/types";
+import { isRepoAllowed } from "../lib/config";
 import { debug } from "../lib/debug";
-import { captureGitDiff } from "../lib/git";
+import { captureGitDiff, getRepoIdentifier } from "../lib/git";
 import { Tail } from "../lib/tail";
 import { ApiClient } from "./api-client";
 
@@ -43,16 +44,20 @@ interface ActiveSession {
   isProcessing: boolean;
   // Timer for debounced diff capture
   diffDebounceTimer: ReturnType<typeof setTimeout> | null;
+  // Count of messages pushed to server (for detecting empty sessions)
+  messagesPushed: number;
 }
 
 export class SessionTracker {
   private sessions = new Map<string, ActiveSession>();
   private api: ApiClient;
+  private serverUrl: string;
   private idleTimeoutMs: number;
   private idleCheckInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(serverUrl: string, idleTimeoutSeconds: number) {
     this.api = new ApiClient(serverUrl);
+    this.serverUrl = serverUrl;
     this.idleTimeoutMs = idleTimeoutSeconds * 1000;
   }
 
@@ -62,6 +67,19 @@ export class SessionTracker {
     }
 
     const sessionInfo = adapter.getSessionInfo(filePath);
+
+    // Check if repository is in allowlist for automatic uploads
+    const repoId = await getRepoIdentifier(sessionInfo.projectPath);
+    if (!repoId || !isRepoAllowed(this.serverUrl, repoId)) {
+      console.log(`Session skipped: Repository not in allowlist`);
+      console.log(`  Path: ${sessionInfo.projectPath}`);
+      console.log(`  Repo: ${repoId || "(not a git repo)"}`);
+      console.log();
+      console.log(`To allow this repository, run:`);
+      console.log(`  archive repo allow ${sessionInfo.projectPath}`);
+      console.log();
+      return;
+    }
 
     console.log(`[${adapter.name}] Session detected: ${filePath}`);
 
@@ -105,6 +123,7 @@ export class SessionTracker {
         lineQueue: [],
         isProcessing: false,
         diffDebounceTimer: null,
+        messagesPushed: 0,
       };
 
       this.sessions.set(filePath, session);
@@ -180,6 +199,7 @@ export class SessionTracker {
         session.streamToken,
         messages
       );
+      session.messagesPushed += result.appended;
       debug(`Push result: appended=${result.appended}, total=${result.message_count}`);
     } catch (err) {
       console.error(`  Failed to push messages:`, err);
@@ -301,6 +321,19 @@ export class SessionTracker {
     }
 
     session.tail.stop();
+
+    // If no messages were pushed, delete the empty session instead of completing it
+    if (session.messagesPushed === 0) {
+      console.log(`  No messages captured, deleting empty session: ${session.sessionId}`);
+      try {
+        await this.api.deleteSession(session.sessionId, session.streamToken);
+        console.log(`  Deleted: ${session.sessionId}`);
+      } catch (err) {
+        // Non-critical - empty session will just remain on server
+        debug(`Failed to delete empty session: ${err}`);
+      }
+      return;
+    }
 
     // Capture final diff
     let finalDiff: string | undefined;
