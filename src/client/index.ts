@@ -697,11 +697,20 @@ function initializeLiveSession(sessionId: string, initialMessages: Message[]): v
   liveSessionManager = new LiveSessionManager(sessionId, {
     onMessage: (messages, _index) => {
       for (const message of messages) {
-        // Track pending tool calls
+        // Track pending tool calls from assistant messages
         if (message.role === "assistant" && message.content_blocks) {
           for (const block of message.content_blocks) {
             if (block.type === "tool_use") {
               pendingToolCalls.add(block.id);
+            }
+          }
+        }
+
+        // Clear pending tool calls when results arrive in user messages
+        if (message.role === "user" && message.content_blocks) {
+          for (const block of message.content_blocks) {
+            if (block.type === "tool_result") {
+              pendingToolCalls.delete(block.tool_use_id);
             }
           }
         }
@@ -730,11 +739,13 @@ function initializeLiveSession(sessionId: string, initialMessages: Message[]): v
             showNewMessagesButton();
           }
         }
+      }
 
-        // Show typing indicator if there are pending tool calls
-        if (pendingToolCalls.size > 0) {
-          showTypingIndicator();
-        }
+      // Update typing indicator based on final pending state after processing all messages
+      if (pendingToolCalls.size > 0) {
+        showTypingIndicator();
+      } else {
+        hideTypingIndicator();
       }
     },
 
@@ -789,6 +800,15 @@ function initializeLiveSession(sessionId: string, initialMessages: Message[]): v
 
         // Re-attach diff toggle handlers
         attachDiffToggleHandlers();
+
+        // Render diff content for non-collapsed diffs
+        diffPanelContainer.querySelectorAll("[data-diff-content]").forEach((el) => {
+          const htmlEl = el as HTMLElement;
+          // Only render if not collapsed (needs-render=false means it should be visible)
+          if (htmlEl.dataset.needsRender !== "true") {
+            renderDiffContent(htmlEl);
+          }
+        });
 
         // Flash to indicate update
         const newDiffPanel = document.getElementById("diffs-container");
