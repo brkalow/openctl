@@ -29,6 +29,8 @@ export type WrapperState = "running" | "waiting";
 
 // Messages from server (relay from browser)
 export type ServerToWrapperMessage =
+  | { type: "auth_ok" }
+  | { type: "auth_failed" }
   | { type: "inject"; content: string; source?: string; message_id: string }
   | { type: "resize"; cols: number; rows: number }
   | { type: "interrupt" }

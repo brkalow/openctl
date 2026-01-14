@@ -28,6 +28,7 @@ export class ServerConnection {
   private reconnecting = false;
   private destroyed = false;
   private authenticated = false;
+  private pendingAuth: { resolve: () => void; reject: (err: Error) => void } | null = null;
 
   constructor(options: ServerConnectionOptions) {
     this.options = options;
@@ -50,10 +51,10 @@ export class ServerConnection {
       }
 
       this.ws.onopen = () => {
+        // Store the promise callbacks for auth response
+        this.pendingAuth = { resolve, reject };
         // Authenticate with stream token
         this.send({ type: "auth", token: this.options.streamToken });
-        this.authenticated = true;
-        resolve();
       };
 
       this.ws.onmessage = (event) => {
@@ -67,16 +68,21 @@ export class ServerConnection {
         }
       };
 
-      this.ws.onerror = (event) => {
+      this.ws.onerror = () => {
         const error = new Error("WebSocket connection failed");
-        if (!this.reconnecting && !this.authenticated) {
-          reject(error);
+        if (this.pendingAuth) {
+          this.pendingAuth.reject(error);
+          this.pendingAuth = null;
         }
         this.options.onError?.(error);
       };
 
       this.ws.onclose = () => {
         this.authenticated = false;
+        if (this.pendingAuth) {
+          this.pendingAuth.reject(new Error("Connection closed before auth"));
+          this.pendingAuth = null;
+        }
         if (!this.destroyed) {
           this.scheduleReconnect();
         }
@@ -86,6 +92,20 @@ export class ServerConnection {
 
   private handleMessage(msg: ServerToWrapperMessage): void {
     switch (msg.type) {
+      case "auth_ok":
+        this.authenticated = true;
+        if (this.pendingAuth) {
+          this.pendingAuth.resolve();
+          this.pendingAuth = null;
+        }
+        break;
+      case "auth_failed":
+        this.authenticated = false;
+        if (this.pendingAuth) {
+          this.pendingAuth.reject(new Error("Authentication failed"));
+          this.pendingAuth = null;
+        }
+        break;
       case "inject":
         this.options.onInject(msg.content, msg.source, msg.message_id);
         break;
