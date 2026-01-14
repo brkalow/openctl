@@ -13,12 +13,14 @@ export class SessionRepository {
     getMessages: Statement;
     clearMessages: Statement;
     insertDiff: Statement;
+    insertDiffReturningId: Statement;
     getDiffs: Statement;
     clearDiffs: Statement;
     // Review statements
     insertReview: Statement;
     getReview: Statement;
     getReviewWithCount: Statement;
+    clearReview: Statement;
     // Annotation statements
     insertAnnotation: Statement;
     getAnnotationsByDiff: Statement;
@@ -27,6 +29,8 @@ export class SessionRepository {
     getLiveSessionByHarnessId: Statement;
     getSessionByHarnessId: Statement;
     getLiveSessions: Statement;
+    // Session lookup by claude_session_id
+    getSessionByClaudeSessionId: Statement;
   };
 
   constructor(private db: Database) {
@@ -51,6 +55,11 @@ export class SessionRepository {
         INSERT INTO diffs (session_id, filename, diff_content, diff_index, additions, deletions, is_session_relevant)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `),
+      insertDiffReturningId: db.prepare(`
+        INSERT INTO diffs (session_id, filename, diff_content, diff_index, additions, deletions, is_session_relevant)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        RETURNING id
+      `),
       getDiffs: db.prepare("SELECT * FROM diffs WHERE session_id = ? ORDER BY diff_index ASC"),
       clearDiffs: db.prepare("DELETE FROM diffs WHERE session_id = ?"),
       // Review statements
@@ -67,6 +76,7 @@ export class SessionRepository {
         WHERE r.session_id = ?
         GROUP BY r.id
       `),
+      clearReview: db.prepare("DELETE FROM reviews WHERE session_id = ?"),
       // Annotation statements
       insertAnnotation: db.prepare(`
         INSERT INTO annotations (review_id, diff_id, line_number, side, annotation_type, content)
@@ -94,6 +104,13 @@ export class SessionRepository {
         LIMIT 1
       `),
       getLiveSessions: db.prepare("SELECT * FROM sessions WHERE status = 'live' ORDER BY last_activity_at DESC"),
+      // Session lookup by claude_session_id (most recent first)
+      getSessionByClaudeSessionId: db.prepare(`
+        SELECT * FROM sessions
+        WHERE claude_session_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+      `),
     };
   }
 
@@ -256,6 +273,15 @@ export class SessionRepository {
    */
   getSessionByHarnessId(harnessSessionId: string, harness: string): Session | null {
     return this.stmts.getSessionByHarnessId.get(harnessSessionId, harness) as Session | null;
+  }
+
+  /**
+   * Find a session by claude_session_id (the agent's UUID).
+   * Used for upserting sessions during batch upload.
+   * Returns most recent session with matching UUID.
+   */
+  getSessionByClaudeSessionId(claudeSessionId: string): Session | null {
+    return this.stmts.getSessionByClaudeSessionId.get(claudeSessionId) as Session | null;
   }
 
   getAllSessions(): Session[] {
@@ -631,6 +657,144 @@ export class SessionRepository {
       }
 
       return created;
+    });
+
+    return transaction();
+  }
+
+  clearReview(sessionId: string): void {
+    this.stmts.clearReview.run(sessionId);
+  }
+
+  /**
+   * Upsert a session with data based on claude_session_id.
+   * If a session with the same claude_session_id exists, updates it.
+   * Otherwise creates a new session.
+   * Returns the session and whether it was an update or create.
+   */
+  upsertSessionWithDataAndReview(
+    session: Omit<Session, "created_at" | "updated_at" | "client_id">,
+    messages: Omit<Message, "id">[],
+    diffs: Omit<Diff, "id">[],
+    reviewData?: {
+      summary: string;
+      model?: string;
+      annotations: Array<{
+        filename: string;
+        line_number: number;
+        side: "additions" | "deletions";
+        annotation_type: AnnotationType;
+        content: string;
+      }>;
+    },
+    clientId?: string
+  ): { session: Session; isUpdate: boolean } {
+    const transaction = this.db.transaction(() => {
+      // Check if session with this claude_session_id already exists
+      let existingSession: Session | null = null;
+      if (session.claude_session_id) {
+        existingSession = this.getSessionByClaudeSessionId(session.claude_session_id);
+      }
+
+      let resultSession: Session;
+      let isUpdate = false;
+
+      if (existingSession) {
+        // Update existing session
+        isUpdate = true;
+        const sessionId = existingSession.id;
+
+        // Update session metadata
+        resultSession = this.updateSession(sessionId, {
+          title: session.title,
+          description: session.description,
+          pr_url: session.pr_url,
+          project_path: session.project_path,
+          model: session.model,
+          harness: session.harness,
+          repo_url: session.repo_url,
+        }) as Session;
+
+        // Clear existing messages, diffs, and reviews
+        this.stmts.clearMessages.run(sessionId);
+        this.stmts.clearDiffs.run(sessionId);
+        this.stmts.clearReview.run(sessionId);
+      } else {
+        // Create new session
+        resultSession = this.stmts.createSession.get(
+          session.id,
+          session.title,
+          session.description,
+          session.claude_session_id,
+          session.pr_url,
+          session.share_token,
+          session.project_path,
+          session.model,
+          session.harness,
+          session.repo_url,
+          session.status || "archived",
+          session.last_activity_at,
+          null, // stream_token_hash not used for batch uploads
+          clientId || null
+        ) as Session;
+      }
+
+      const sessionId = resultSession.id;
+
+      // Insert messages (use sessionId to avoid mutating input arrays)
+      for (const msg of messages) {
+        this.stmts.insertMessage.run(
+          sessionId,
+          msg.role,
+          msg.content,
+          JSON.stringify(msg.content_blocks || []),
+          msg.timestamp,
+          msg.message_index
+        );
+      }
+
+      // Insert diffs and track their IDs by filename
+      const diffIdByFilename = new Map<string, number>();
+      for (const diff of diffs) {
+        const result = this.stmts.insertDiffReturningId.get(
+          sessionId,
+          diff.filename,
+          diff.diff_content,
+          diff.diff_index,
+          diff.additions || 0,
+          diff.deletions || 0,
+          diff.is_session_relevant ? 1 : 0
+        ) as { id: number };
+
+        if (diff.filename) {
+          diffIdByFilename.set(diff.filename, result.id);
+        }
+      }
+
+      // Create review and annotations if provided
+      if (reviewData) {
+        const review = this.stmts.insertReview.get(
+          sessionId,
+          reviewData.summary,
+          reviewData.model || null
+        ) as Review;
+
+        for (const ann of reviewData.annotations) {
+          const diffId = diffIdByFilename.get(ann.filename);
+          if (diffId) {
+            this.stmts.insertAnnotation.run(
+              review.id,
+              diffId,
+              ann.line_number,
+              ann.side,
+              ann.annotation_type,
+              ann.content
+            );
+          }
+        }
+      }
+
+      return { session: resultSession, isUpdate };
     });
 
     return transaction();

@@ -114,6 +114,9 @@ export function initializeDatabase(dbPath: string = process.env.DATABASE_PATH ||
   db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_client_id ON sessions(client_id)`);
 
+  // Index for session lookup by claude_session_id (for upsert on upload)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_claude_session_id ON sessions(claude_session_id)`);
+
   return db;
 }
 
