@@ -13,6 +13,7 @@ export class SessionRepository {
     getMessages: Statement;
     clearMessages: Statement;
     insertDiff: Statement;
+    insertDiffReturningId: Statement;
     getDiffs: Statement;
     clearDiffs: Statement;
     // Review statements
@@ -53,6 +54,11 @@ export class SessionRepository {
       insertDiff: db.prepare(`
         INSERT INTO diffs (session_id, filename, diff_content, diff_index, additions, deletions, is_session_relevant)
         VALUES (?, ?, ?, ?, ?, ?, ?)
+      `),
+      insertDiffReturningId: db.prepare(`
+        INSERT INTO diffs (session_id, filename, diff_content, diff_index, additions, deletions, is_session_relevant)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        RETURNING id
       `),
       getDiffs: db.prepare("SELECT * FROM diffs WHERE session_id = ? ORDER BY diff_index ASC"),
       clearDiffs: db.prepare("DELETE FROM diffs WHERE session_id = ?"),
@@ -713,14 +719,6 @@ export class SessionRepository {
         this.stmts.clearMessages.run(sessionId);
         this.stmts.clearDiffs.run(sessionId);
         this.stmts.clearReview.run(sessionId);
-
-        // Update session_id in messages and diffs to match existing session
-        for (const msg of messages) {
-          msg.session_id = sessionId;
-        }
-        for (const diff of diffs) {
-          diff.session_id = sessionId;
-        }
       } else {
         // Create new session
         resultSession = this.stmts.createSession.get(
@@ -743,10 +741,10 @@ export class SessionRepository {
 
       const sessionId = resultSession.id;
 
-      // Insert messages
+      // Insert messages (use sessionId to avoid mutating input arrays)
       for (const msg of messages) {
         this.stmts.insertMessage.run(
-          msg.session_id,
+          sessionId,
           msg.role,
           msg.content,
           JSON.stringify(msg.content_blocks || []),
@@ -758,12 +756,8 @@ export class SessionRepository {
       // Insert diffs and track their IDs by filename
       const diffIdByFilename = new Map<string, number>();
       for (const diff of diffs) {
-        const result = this.db.prepare(`
-          INSERT INTO diffs (session_id, filename, diff_content, diff_index, additions, deletions, is_session_relevant)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-          RETURNING id
-        `).get(
-          diff.session_id,
+        const result = this.stmts.insertDiffReturningId.get(
+          sessionId,
           diff.filename,
           diff.diff_content,
           diff.diff_index,
