@@ -27,8 +27,9 @@ A platform for sharing, reviewing, and eventually interacting with coding agent 
 
 ### Phase 3: Interactive Feedback
 - In-the-loop review: provide feedback on diffs within the UI
-- Feedback triggers new agent sessions
-- Could be live interaction with running instances or sandboxed agents
+- Bidirectional communication with running Claude sessions via CLI wrapper
+- Follow-up prompts, diff comments, and suggested edits injected directly
+- See [interactive_sessions.md](./interactive_sessions.md) for specification
 
 ## Design Principles
 
