@@ -688,12 +688,12 @@ Add help text for keyboard shortcuts.
 
 ## Checklist
 
-- [ ] Update `LiveSessionManager` with interactive callbacks
-- [ ] Create `FeedbackInput` component
-- [ ] Create feedback CSS styles
-- [ ] Integrate feedback input into session detail
-- [ ] Update session API to include interactive fields
-- [ ] Add interactive badge to session list
-- [ ] Add keyboard shortcut help
-- [ ] Add toast notification system
+- [x] Update `LiveSessionManager` with interactive callbacks
+- [x] Create `FeedbackInput` component
+- [x] Create feedback CSS styles
+- [x] Integrate feedback input into session detail
+- [x] Update session API to include interactive fields
+- [x] Add interactive badge to session list
+- [x] Add keyboard shortcut help
+- [x] Add toast notification system
 - [ ] Manual testing all states

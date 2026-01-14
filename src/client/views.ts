@@ -66,21 +66,29 @@ function renderSessionCard(session: Session): string {
     day: "numeric",
   });
 
+  const isLive = session.status === "live";
+  const isInteractive = session.interactive;
+
   return `
     <a
       href="/sessions/${escapeHtml(session.id)}"
-      class="block bg-bg-secondary border border-bg-elevated rounded-lg p-4 hover:bg-bg-tertiary hover:border-bg-hover transition-colors group"
+      class="block bg-bg-secondary border border-bg-elevated rounded-lg p-4 hover:bg-bg-tertiary hover:border-bg-hover transition-colors group ${isLive ? "border-l-2 border-l-green-500" : ""}"
       data-session-card
     >
       <div class="flex items-start justify-between gap-3 mb-2">
         <h3 class="text-sm font-medium text-text-primary group-hover:text-accent-primary transition-colors line-clamp-2" data-title>
           ${escapeHtml(stripSystemTagsFromTitle(session.title))}
         </h3>
-        ${
-          session.pr_url
-            ? `<span class="shrink-0 px-1.5 py-0.5 bg-accent-primary/10 text-accent-primary text-xs font-medium rounded">PR</span>`
-            : ""
-        }
+        <div class="flex items-center gap-1.5 shrink-0">
+          ${isLive ? `
+            <span class="px-1.5 py-0.5 bg-green-500/20 text-green-400 text-xs font-medium rounded flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>
+              LIVE
+            </span>
+          ` : ""}
+          ${isInteractive ? renderInteractiveBadge() : ""}
+          ${session.pr_url ? `<span class="px-1.5 py-0.5 bg-accent-primary/10 text-accent-primary text-xs font-medium rounded">PR</span>` : ""}
+        </div>
       </div>
       ${
         session.description
@@ -115,6 +123,7 @@ interface SessionDetailData {
 export function renderSessionDetail({ session, messages, diffs, shareUrl, review }: SessionDetailData): string {
   const hasDiffs = diffs.length > 0;
   const isLive = session.status === "live";
+  const isInteractive = session.interactive ?? false;
   const date = formatDate(session.created_at);
 
   const resumeCommand = session.claude_session_id
@@ -132,7 +141,7 @@ export function renderSessionDetail({ session, messages, diffs, shareUrl, review
   const diffPanelClass = hasDiffs ? "diff-panel-container visible" : "diff-panel-container hidden";
 
   return `
-    <div class="session-detail" data-session-is-live="${isLive}" data-session-has-diffs="${hasDiffs}">
+    <div class="session-detail" data-session-is-live="${isLive}" data-session-has-diffs="${hasDiffs}" data-session-is-interactive="${isInteractive}" data-session-wrapper-connected="${session.wrapper_connected ?? false}">
       <!-- Header -->
       ${renderHeader(session, date, resumeCommand)}
 
@@ -141,7 +150,7 @@ export function renderSessionDetail({ session, messages, diffs, shareUrl, review
         <div class="${gridClass || ""}" data-content-grid>
           <!-- Conversation: main content, scrolls with page -->
           <div class="${conversationClass}" data-conversation-panel>
-            ${renderConversationPanel(messages)}
+            ${renderConversationPanel(messages, isInteractive && isLive)}
           </div>
 
           ${isLive || hasDiffs ? `
@@ -393,19 +402,24 @@ function renderFooter(resumeCommand: string, shareUrl: string | null): string {
   `;
 }
 
-function renderConversationPanel(messages: Message[]): string {
+function renderConversationPanel(messages: Message[], isInteractive: boolean = false): string {
   // Conversation panel: sticky sidebar on left, fixed height with internal scroll
   // Render messages with gap tracking based on actually rendered messages
   let prevRenderedRole: string | null = null;
   const renderedMessages: string[] = [];
 
   for (let idx = 0; idx < messages.length; idx++) {
-    const result = renderMessageBlock(messages[idx], messages, idx, prevRenderedRole);
+    const msg = messages[idx];
+    if (!msg) continue;
+    const result = renderMessageBlock(msg, messages, idx, prevRenderedRole);
     if (result) {
       renderedMessages.push(result);
-      prevRenderedRole = messages[idx].role;
+      prevRenderedRole = msg.role;
     }
   }
+
+  // Adjust height based on whether feedback input will be shown
+  const conversationHeight = isInteractive ? "calc(100% - 2rem - 120px)" : "calc(100% - 2rem)";
 
   return `
     <div class="min-w-0 lg:sticky lg:top-[calc(3.5rem+1.5rem)] lg:self-start" style="height: calc(100vh - 10rem);">
@@ -413,10 +427,12 @@ function renderConversationPanel(messages: Message[]): string {
         <h2 class="text-sm font-semibold text-text-primary">Conversation</h2>
         <span id="message-count" class="text-xs text-text-muted tabular-nums">${messages.length} messages</span>
       </div>
-      <div id="conversation-list" class="conversation-panel flex-1 overflow-y-auto flex flex-col" style="height: calc(100% - 2rem);">
+      <div id="conversation-list" class="conversation-panel flex-1 overflow-y-auto flex flex-col" style="height: ${conversationHeight};">
         ${renderedMessages.join("")}
         ${renderTypingIndicator()}
       </div>
+      <!-- Placeholder for feedback input (rendered dynamically for interactive sessions) -->
+      <div id="feedback-input-placeholder"></div>
     </div>
     ${renderNewMessagesButton()}
   `;
@@ -736,4 +752,141 @@ export function renderConnectionStatusHtml(connected: boolean): string {
       <span>Reconnecting...</span>
     </span>
   `;
+}
+
+// Feedback input state for interactive sessions
+export interface FeedbackInputState {
+  isInteractive: boolean;
+  wrapperConnected: boolean;
+  claudeState: "running" | "waiting" | "unknown";
+  sessionComplete: boolean;
+  pendingFeedback: Array<{ id: string; status: "pending" | "approved" | "rejected" }>;
+}
+
+// Render feedback input panel for interactive sessions
+export function renderFeedbackInput(state: FeedbackInputState): string {
+  const { isInteractive, wrapperConnected, claudeState, sessionComplete, pendingFeedback } = state;
+
+  // Non-interactive or complete sessions don't show input
+  if (!isInteractive || sessionComplete) {
+    return "";
+  }
+
+  // Determine input state
+  const canSend = wrapperConnected && claudeState === "waiting";
+  const statusText = getFeedbackStatusText(wrapperConnected, claudeState);
+  const pendingCount = pendingFeedback.filter(f => f.status === "pending").length;
+
+  return `
+    <div id="feedback-input-container" class="feedback-input-container">
+      ${renderFeedbackStatus(statusText, pendingCount)}
+      <div class="feedback-input-wrapper ${canSend ? "" : "disabled"}">
+        <textarea
+          id="feedback-input"
+          class="feedback-input"
+          placeholder="${canSend ? "Send a follow-up message..." : "Waiting..."}"
+          ${canSend ? "" : "disabled"}
+          rows="2"
+        ></textarea>
+        <button
+          id="feedback-submit"
+          class="feedback-submit"
+          ${canSend ? "" : "disabled"}
+          title="Send feedback (Ctrl+Enter)"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+          </svg>
+        </button>
+      </div>
+      <div class="feedback-help">
+        <span class="feedback-shortcut">${navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+Enter</span> to send
+      </div>
+      ${renderPendingFeedback(pendingFeedback)}
+    </div>
+  `;
+}
+
+function getFeedbackStatusText(wrapperConnected: boolean, claudeState: "running" | "waiting" | "unknown"): string {
+  if (!wrapperConnected) {
+    return "Waiting for session to connect...";
+  }
+
+  switch (claudeState) {
+    case "running":
+      return "Claude is working...";
+    case "waiting":
+      return "Claude is waiting for input";
+    default:
+      return "";
+  }
+}
+
+function renderFeedbackStatus(text: string, pendingCount: number): string {
+  if (!text && pendingCount === 0) return "";
+
+  return `
+    <div class="feedback-status">
+      <span class="feedback-status-text">${text}</span>
+      ${pendingCount > 0 ? `
+        <span class="feedback-pending-badge">
+          ${pendingCount} pending approval
+        </span>
+      ` : ""}
+    </div>
+  `;
+}
+
+function renderPendingFeedback(pending: Array<{ id: string; status: "pending" | "approved" | "rejected" }>): string {
+  const pendingItems = pending.filter(f => f.status === "pending");
+  if (pendingItems.length === 0) return "";
+
+  return `
+    <div class="feedback-pending-list">
+      ${pendingItems.map(_f => `
+        <div class="feedback-pending-item">
+          <span class="feedback-pending-icon">&#9203;</span>
+          <span>Waiting for approval...</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+// Render wrapper status indicator for interactive sessions
+export function renderWrapperStatus(connected: boolean, claudeState: "running" | "waiting" | "unknown"): string {
+  if (!connected) {
+    return `
+      <span class="flex items-center gap-1 text-xs text-yellow-500">
+        <span class="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse"></span>
+        <span>Waiting for wrapper...</span>
+      </span>
+    `;
+  }
+
+  if (claudeState === "waiting") {
+    return `
+      <span class="flex items-center gap-1 text-xs text-accent-primary">
+        <span class="w-1.5 h-1.5 rounded-full bg-accent-primary animate-pulse"></span>
+        <span>Waiting for input</span>
+      </span>
+    `;
+  }
+
+  return `
+    <span class="flex items-center gap-1 text-xs text-green-400">
+      <span class="w-1.5 h-1.5 rounded-full bg-green-400"></span>
+      <span>Interactive</span>
+    </span>
+  `;
+}
+
+// Render interactive badge for session cards
+export function renderInteractiveBadge(): string {
+  return `<span class="shrink-0 px-1.5 py-0.5 bg-accent-secondary/20 text-accent-secondary text-xs font-medium rounded flex items-center gap-1">
+    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+    </svg>
+    Interactive
+  </span>`;
 }

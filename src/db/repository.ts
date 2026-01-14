@@ -270,18 +270,12 @@ export class SessionRepository {
 
   getSession(id: string): Session | null {
     const result = this.stmts.getSession.get(id) as Record<string, unknown> | null;
-    if (!result) return null;
-
-    // Convert SQLite integers to booleans
-    return {
-      ...result,
-      interactive: Boolean(result.interactive),
-      wrapper_connected: Boolean(result.wrapper_connected),
-    } as Session;
+    return result ? this.normalizeSession(result) : null;
   }
 
   getSessionByShareToken(token: string): Session | null {
-    return this.stmts.getSessionByShareToken.get(token) as Session | null;
+    const result = this.stmts.getSessionByShareToken.get(token) as Record<string, unknown> | null;
+    return result ? this.normalizeSession(result) : null;
   }
 
   /**
@@ -289,7 +283,8 @@ export class SessionRepository {
    * Used to resume streaming to an existing session after daemon restart.
    */
   getLiveSessionByHarnessId(harnessSessionId: string, harness: string): Session | null {
-    return this.stmts.getLiveSessionByHarnessId.get(harnessSessionId, harness) as Session | null;
+    const result = this.stmts.getLiveSessionByHarnessId.get(harnessSessionId, harness) as Record<string, unknown> | null;
+    return result ? this.normalizeSession(result) : null;
   }
 
   /**
@@ -298,11 +293,13 @@ export class SessionRepository {
    * Prefers live sessions, then archived/completed by most recent.
    */
   getSessionByHarnessId(harnessSessionId: string, harness: string): Session | null {
-    return this.stmts.getSessionByHarnessId.get(harnessSessionId, harness) as Session | null;
+    const result = this.stmts.getSessionByHarnessId.get(harnessSessionId, harness) as Record<string, unknown> | null;
+    return result ? this.normalizeSession(result) : null;
   }
 
   getAllSessions(): Session[] {
-    return this.stmts.getAllSessions.all() as Session[];
+    const results = this.stmts.getAllSessions.all() as Record<string, unknown>[];
+    return results.map(r => this.normalizeSession(r));
   }
 
   /**
@@ -310,7 +307,19 @@ export class SessionRepository {
    */
   getSessionsByClientId(clientId: string): Session[] {
     const stmt = this.db.prepare("SELECT * FROM sessions WHERE client_id = ? ORDER BY created_at DESC");
-    return stmt.all(clientId) as Session[];
+    const results = stmt.all(clientId) as Record<string, unknown>[];
+    return results.map(r => this.normalizeSession(r));
+  }
+
+  /**
+   * Convert SQLite integer fields to proper booleans for Session objects.
+   */
+  private normalizeSession(result: Record<string, unknown>): Session {
+    return {
+      ...result,
+      interactive: Boolean(result.interactive),
+      wrapper_connected: Boolean(result.wrapper_connected),
+    } as Session;
   }
 
   deleteSession(id: string): boolean {
