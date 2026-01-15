@@ -1,0 +1,15 @@
+{
+  "name": "@openctl/claude-plugin",
+  "version": "0.1.0",
+  "description": "Claude Code plugin for openctl interactive sessions",
+  "main": "hooks/stop.ts",
+  "scripts": {
+    "build": "bun build hooks/stop.ts --outdir dist --target bun",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  }
+}

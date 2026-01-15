@@ -501,7 +501,7 @@ export function createApiRoutes(repo: SessionRepository) {
     async createLiveSession(req: Request): Promise<Response> {
       try {
         const body = await req.json();
-        const { title, project_path, harness_session_id, harness, model, repo_url } = body;
+        const { title, project_path, harness_session_id, harness, model, repo_url, interactive = false } = body;
         // Support both old and new field names for backwards compatibility
         const harnessSessionId = harness_session_id || body.claude_session_id;
 
@@ -587,6 +587,7 @@ export function createApiRoutes(repo: SessionRepository) {
             repo_url: repo_url || null,
             status: "live" as SessionStatus,
             last_activity_at: now,
+            interactive: Boolean(interactive),
           },
           streamTokenHash,
           clientId || undefined
@@ -599,6 +600,7 @@ export function createApiRoutes(repo: SessionRepository) {
           resumed: false,
           message_count: 0,
           last_index: -1,
+          interactive: Boolean(interactive),
         });
       } catch (error) {
         console.error("Error creating live session:", error);
@@ -874,6 +876,62 @@ export function createApiRoutes(repo: SessionRepository) {
       }
     },
 
+    // Mark a live session as interactive (enables browser feedback)
+    async markInteractive(req: Request, sessionId: string): Promise<Response> {
+      try {
+        const authHeader = req.headers.get("Authorization");
+        if (!authHeader?.startsWith("Bearer ")) {
+          return jsonError("Missing or invalid authorization", 401);
+        }
+
+        const token = authHeader.slice(7);
+        const tokenHash = await hashToken(token);
+        if (!repo.verifyStreamToken(sessionId, tokenHash)) {
+          return jsonError("Invalid stream token or session not live", 401);
+        }
+
+        const session = repo.getSession(sessionId);
+        if (!session) {
+          return jsonError("Session not found", 404);
+        }
+
+        repo.setSessionInteractive(sessionId, true);
+
+        return json({ success: true, interactive: true });
+      } catch (error) {
+        console.error("Error marking session interactive:", error);
+        return jsonError("Failed to mark session interactive", 500);
+      }
+    },
+
+    // Disable interactive mode for a session (called when daemon disconnects)
+    async disableInteractive(req: Request, sessionId: string): Promise<Response> {
+      try {
+        const authHeader = req.headers.get("Authorization");
+        if (!authHeader?.startsWith("Bearer ")) {
+          return jsonError("Missing or invalid authorization", 401);
+        }
+
+        const token = authHeader.slice(7);
+        const tokenHash = await hashToken(token);
+        if (!repo.verifyStreamToken(sessionId, tokenHash)) {
+          return jsonError("Invalid stream token or session not live", 401);
+        }
+
+        const session = repo.getSession(sessionId);
+        if (!session) {
+          return jsonError("Session not found", 404);
+        }
+
+        repo.setSessionInteractive(sessionId, false);
+
+        return json({ success: true, interactive: false });
+      } catch (error) {
+        console.error("Error disabling interactive:", error);
+        return jsonError("Failed to disable interactive", 500);
+      }
+    },
+
     // Get the repository for WebSocket handling
     getRepository(): SessionRepository {
       return repo;
@@ -933,7 +991,7 @@ export function removeSessionSubscriber(sessionId: string, ws: WebSocket): void 
   }
 }
 
-function broadcastToSession(sessionId: string, message: unknown): void {
+export function broadcastToSession(sessionId: string, message: unknown): void {
   const subscribers = sessionSubscribers.get(sessionId);
   if (!subscribers) return;
 
@@ -965,7 +1023,7 @@ function broadcastToSession(sessionId: string, message: unknown): void {
   }
 }
 
-function closeSessionConnections(sessionId: string): void {
+export function closeSessionConnections(sessionId: string): void {
   const subscribers = sessionSubscribers.get(sessionId);
   if (!subscribers) return;
 

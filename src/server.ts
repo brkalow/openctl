@@ -1,6 +1,9 @@
 import { initializeDatabase } from "./db/schema";
 import { SessionRepository } from "./db/repository";
-import { createApiRoutes, addSessionSubscriber, removeSessionSubscriber, closeAllConnections } from "./routes/api";
+import { createApiRoutes, addSessionSubscriber, removeSessionSubscriber, closeAllConnections, broadcastToSession } from "./routes/api";
+import { handleBrowserMessage } from "./routes/browser-messages";
+import { handleGetPendingFeedback, handleMarkFeedbackDelivered, handleGetPendingFeedbackByClaudeSession, handleMarkSessionInteractive, handleMarkSessionFinished } from "./routes/feedback-api";
+import type { BrowserToServerMessage } from "./routes/websocket-types";
 
 // Import HTML template - Bun will bundle CSS and JS referenced in this file
 import homepage from "../public/index.html";
@@ -14,9 +17,11 @@ const repo = new SessionRepository(db);
 const api = createApiRoutes(repo);
 
 // WebSocket data attached to each connection
-interface WebSocketData {
+interface BrowserWebSocketData {
   sessionId: string;
 }
+
+type WebSocketData = BrowserWebSocketData;
 
 // Start server
 const server = Bun.serve({
@@ -94,13 +99,40 @@ const server = Bun.serve({
     "/api/sessions/:id/complete": {
       POST: (req) => api.completeSession(req, req.params.id),
     },
+
+    "/api/sessions/:id/interactive": {
+      POST: (req) => api.markInteractive(req, req.params.id),
+      DELETE: (req) => api.disableInteractive(req, req.params.id),
+    },
+
+    // Feedback API endpoints for plugin-based interactive sessions
+    // Note: by-claude-session route must come before :id routes to avoid matching conflicts
+    "/api/sessions/by-claude-session/:claudeSessionId/feedback/pending": {
+      GET: (req) => handleGetPendingFeedbackByClaudeSession(req.params.claudeSessionId, repo),
+    },
+
+    "/api/sessions/by-claude-session/:claudeSessionId/interactive": {
+      POST: (req) => handleMarkSessionInteractive(req.params.claudeSessionId, repo),
+    },
+
+    "/api/sessions/by-claude-session/:claudeSessionId/finished": {
+      POST: (req) => handleMarkSessionFinished(req.params.claudeSessionId, repo),
+    },
+
+    "/api/sessions/:id/feedback/pending": {
+      GET: (req) => handleGetPendingFeedback(req.params.id, repo),
+    },
+
+    "/api/sessions/:id/feedback/:messageId/delivered": {
+      POST: (req) => handleMarkFeedbackDelivered(req.params.id, req.params.messageId, repo),
+    },
   },
 
   fetch(req, server) {
-    // Handle WebSocket upgrade for live session subscriptions
     const url = new URL(req.url);
-    const wsMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/ws$/);
 
+    // Handle WebSocket upgrade for live session subscriptions (browser clients)
+    const wsMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/ws$/);
     if (wsMatch) {
       const sessionId = wsMatch[1];
       const session = repo.getSession(sessionId);
@@ -115,7 +147,7 @@ const server = Bun.serve({
         return new Response("WebSocket only available for live sessions", { status: 410 });
       }
 
-      const upgraded = server.upgrade<WebSocketData>(req, {
+      const upgraded = server.upgrade<BrowserWebSocketData>(req, {
         data: { sessionId },
       });
 
@@ -131,56 +163,54 @@ const server = Bun.serve({
 
   websocket: {
     open(ws) {
-      const { sessionId } = ws.data as WebSocketData;
-      addSessionSubscriber(sessionId, ws as unknown as WebSocket);
+      const data = ws.data as WebSocketData;
 
-      // Send connected message with current state
-      const session = repo.getSession(sessionId);
-      const messageCount = repo.getMessageCount(sessionId);
-      const lastIndex = repo.getLastMessageIndex(sessionId);
+      // Add to subscriber list
+      addSessionSubscriber(data.sessionId, ws as unknown as WebSocket);
+
+      // Send connected message with current state including interactive info
+      const session = repo.getSession(data.sessionId);
+      const messageCount = repo.getMessageCount(data.sessionId);
+      const lastIndex = repo.getLastMessageIndex(data.sessionId);
 
       ws.send(JSON.stringify({
         type: "connected",
-        session_id: sessionId,
+        session_id: data.sessionId,
         status: session?.status || "unknown",
         message_count: messageCount,
         last_index: lastIndex,
+        interactive: session?.interactive ?? false,
+        claude_state: "unknown" as const,
       }));
     },
 
     message(ws, message) {
-      const { sessionId } = ws.data as WebSocketData;
+      const data = ws.data as WebSocketData;
 
       try {
-        const data = JSON.parse(message.toString());
+        const msg = JSON.parse(message.toString());
 
-        if (data.type === "subscribe" && typeof data.from_index === "number") {
-          // Client wants to resume from a specific index
-          const messages = repo.getMessagesFromIndex(sessionId, data.from_index);
-          if (messages.length > 0) {
-            ws.send(JSON.stringify({
-              type: "message",
-              messages,
-              index: messages[messages.length - 1].message_index,
-            }));
-          }
-        } else if (data.type === "ping") {
-          ws.send(JSON.stringify({ type: "pong", timestamp: new Date().toISOString() }));
-        }
+        // Handle browser messages (subscribe, ping, user_message, etc.)
+        handleBrowserMessage(
+          data.sessionId,
+          msg as BrowserToServerMessage,
+          repo,
+          (response) => ws.send(JSON.stringify(response))
+        );
       } catch {
         // Invalid message, ignore
       }
     },
 
     close(ws) {
-      const { sessionId } = ws.data as WebSocketData;
-      removeSessionSubscriber(sessionId, ws as unknown as WebSocket);
+      const data = ws.data as WebSocketData;
+      removeSessionSubscriber(data.sessionId, ws as unknown as WebSocket);
     },
 
     error(ws, error) {
       console.error("WebSocket error:", error);
-      const { sessionId } = ws.data as WebSocketData;
-      removeSessionSubscriber(sessionId, ws as unknown as WebSocket);
+      const data = ws.data as WebSocketData;
+      removeSessionSubscriber(data.sessionId, ws as unknown as WebSocket);
     },
   },
 });

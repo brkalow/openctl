@@ -1,5 +1,5 @@
 import { Router } from "./router";
-import { renderSessionList, renderSessionDetail, renderNotFound, renderSingleMessage, renderConnectionStatusHtml, renderDiffPanel, escapeHtml } from "./views";
+import { renderSessionList, renderSessionDetail, renderNotFound, renderSingleMessage, renderConnectionStatusHtml, renderDiffPanel, escapeHtml, renderFeedbackInput, renderSessionStatus, type FeedbackInputState } from "./views";
 import { formatMarkdown } from "./blocks";
 import type { Session, Message, Diff, Review, Annotation, AnnotationType } from "../db/schema";
 // Import @pierre/diffs - this registers the web component and provides FileDiff class
@@ -27,10 +27,18 @@ let liveSessionManager: LiveSessionManager | null = null;
 let lastRenderedRole: string | null = null;
 let pendingToolCalls = new Set<string>();
 
+// Interactive session state
+let interactiveState: FeedbackInputState = {
+  isInteractive: false,
+  claudeState: "unknown",
+  sessionComplete: false,
+  pendingFeedback: [],
+};
+
 // Toast notification system
 declare global {
   interface Window {
-    showToast: (message: string, type?: "success" | "error") => void;
+    showToast: (message: string, type?: "success" | "error" | "info") => void;
     copyToClipboard: (text: string) => Promise<void>;
   }
 }
@@ -149,7 +157,7 @@ router.on("/sessions/:id", async (params) => {
 
   // Initialize live session if status is live
   if (data.session.status === "live") {
-    initializeLiveSession(data.session.id, data.messages);
+    initializeLiveSession(data.session.id, data.messages, data.session);
   }
 });
 
@@ -662,10 +670,18 @@ function initializeCodeBlocks() {
 }
 
 // Live session initialization
-function initializeLiveSession(sessionId: string, initialMessages: Message[]): void {
+function initializeLiveSession(sessionId: string, initialMessages: Message[], session: Session): void {
   // Track the last rendered role for proper message grouping
   lastRenderedRole = initialMessages.length > 0 ? initialMessages[initialMessages.length - 1].role : null;
   pendingToolCalls = new Set<string>();
+
+  // Initialize interactive state from session data
+  interactiveState = {
+    isInteractive: session.interactive ?? false,
+    claudeState: "unknown",
+    sessionComplete: false,
+    pendingFeedback: [],
+  };
 
   // Build a set of all tool_use_ids and completed tool_result_ids in a single pass (O(n))
   const allToolUseIds = new Set<string>();
@@ -700,6 +716,11 @@ function initializeLiveSession(sessionId: string, initialMessages: Message[]): v
 
   // Set up new messages button
   initNewMessagesButton(conversationList);
+
+  // Initialize feedback input for interactive sessions
+  if (interactiveState.isInteractive) {
+    initializeFeedbackInput();
+  }
 
   liveSessionManager = new LiveSessionManager(sessionId, {
     onMessage: (messages, _index) => {
@@ -830,6 +851,9 @@ function initializeLiveSession(sessionId: string, initialMessages: Message[]): v
       // Update header to show completed status
       updateSessionStatus("complete");
       hideTypingIndicator();
+      // Update interactive state
+      interactiveState.sessionComplete = true;
+      updateFeedbackInput();
     },
 
     onConnectionChange: (connected) => {
@@ -861,9 +885,123 @@ function initializeLiveSession(sessionId: string, initialMessages: Message[]): v
         `;
       }
     },
+
+    // Interactive session callbacks
+    onInteractiveInfo: (interactive, claudeState) => {
+      interactiveState.isInteractive = interactive;
+      interactiveState.claudeState = claudeState;
+      if (interactive) {
+        initializeFeedbackInput();
+      }
+      updateFeedbackInput();
+    },
+
+    onClaudeState: (state) => {
+      interactiveState.claudeState = state;
+      updateFeedbackInput();
+    },
+
+    onFeedbackQueued: (messageId, position) => {
+      interactiveState.pendingFeedback.push({ id: messageId, status: "pending" });
+      updateFeedbackInput();
+      window.showToast(`Message queued (position: ${position})`, "info");
+    },
+
+    onFeedbackStatus: (messageId, status) => {
+      // Update the feedback status
+      const feedback = interactiveState.pendingFeedback.find(f => f.id === messageId);
+      if (feedback) {
+        feedback.status = status === "expired" ? "rejected" : status;
+      }
+      updateFeedbackInput();
+
+      // Show toast based on status
+      if (status === "approved") {
+        window.showToast("Message sent to session", "success");
+      } else if (status === "rejected") {
+        window.showToast("Message was declined", "error");
+      } else if (status === "expired") {
+        window.showToast("Message expired", "error");
+      }
+
+      // Remove from pending after a delay
+      setTimeout(() => {
+        interactiveState.pendingFeedback = interactiveState.pendingFeedback.filter(f => f.id !== messageId);
+        updateFeedbackInput();
+      }, 3000);
+    },
+
+    onOutput: (_data) => {
+      // Terminal output - could be used for live terminal view in the future
+      // For now, we just log it
+    },
   });
 
   liveSessionManager.connect();
+}
+
+// Initialize feedback input UI
+function initializeFeedbackInput(): void {
+  const placeholder = document.getElementById("feedback-input-placeholder");
+  if (!placeholder) return;
+
+  updateFeedbackInput();
+  attachFeedbackInputHandlers();
+}
+
+// Update feedback input UI based on current state
+function updateFeedbackInput(): void {
+  const placeholder = document.getElementById("feedback-input-placeholder");
+  if (!placeholder) return;
+
+  placeholder.innerHTML = renderFeedbackInput(interactiveState);
+  attachFeedbackInputHandlers();
+}
+
+// Attach event handlers to feedback input
+function attachFeedbackInputHandlers(): void {
+  const input = document.getElementById("feedback-input") as HTMLTextAreaElement | null;
+  const submitBtn = document.getElementById("feedback-submit");
+
+  if (input) {
+    // Remove existing listeners by replacing the element
+    const newInput = input.cloneNode(true) as HTMLTextAreaElement;
+    input.parentNode?.replaceChild(newInput, input);
+
+    // Handle Ctrl+Enter or Cmd+Enter to submit
+    newInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        submitFeedback();
+      }
+    });
+
+    // Auto-resize textarea
+    newInput.addEventListener("input", () => {
+      newInput.style.height = "auto";
+      newInput.style.height = Math.min(newInput.scrollHeight, 150) + "px";
+    });
+  }
+
+  if (submitBtn) {
+    // Remove existing listeners by replacing the element
+    const newBtn = submitBtn.cloneNode(true);
+    submitBtn.parentNode?.replaceChild(newBtn, submitBtn);
+
+    newBtn.addEventListener("click", () => submitFeedback());
+  }
+}
+
+// Submit feedback to the session
+function submitFeedback(): void {
+  const input = document.getElementById("feedback-input") as HTMLTextAreaElement | null;
+  if (!input || !input.value.trim() || !liveSessionManager) return;
+
+  const content = input.value.trim();
+  input.value = "";
+  input.style.height = "auto";
+
+  liveSessionManager.sendFeedback(content);
 }
 
 function updateMessageCount(): void {
