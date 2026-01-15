@@ -775,6 +775,32 @@ function initializeLiveSession(sessionId: string, initialMessages: Message[], se
       } else {
         hideTypingIndicator();
       }
+
+      // For interactive sessions, when we receive a user message with text content,
+      // it means feedback was processed - clear any stale pending items and update UI
+      if (interactiveState.isInteractive) {
+        // Only treat as feedback if the user message has text content (not just tool results)
+        const hasUserFeedback = messages.some(m =>
+          m.role === "user" &&
+          m.content_blocks?.some(block => block.type === "text")
+        );
+        if (hasUserFeedback && interactiveState.pendingFeedback.length > 0) {
+          // Mark oldest pending item as approved if we haven't received explicit status
+          const pendingItem = interactiveState.pendingFeedback.find(f => f.status === "pending");
+          if (pendingItem) {
+            // Use immutable update to avoid direct state mutation
+            interactiveState.pendingFeedback = interactiveState.pendingFeedback.map(f =>
+              f.id === pendingItem.id ? { ...f, status: "approved" as const } : f
+            );
+            // Remove after a short delay
+            setTimeout(() => {
+              interactiveState.pendingFeedback = interactiveState.pendingFeedback.filter(f => f.id !== pendingItem.id);
+              updateFeedbackInput();
+            }, 1000);
+          }
+        }
+        updateFeedbackInput();
+      }
     },
 
     onToolResult: (result) => {
