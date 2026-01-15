@@ -481,12 +481,12 @@ export function renderDiffPanel(diffs: Diff[], review?: ReviewWithCount | null):
         <h2 class="text-sm font-semibold text-text-primary">Code Changes</h2>
         <span class="text-xs text-text-muted tabular-nums">${totalCount} file${totalCount !== 1 ? "s" : ""}</span>
       </div>
-      <div id="diffs-container" class="bg-bg-secondary border border-bg-elevated rounded-lg">
+      <div id="diffs-container" class="bg-bg-secondary border border-bg-elevated rounded-lg overflow-hidden">
         ${
           sessionCount > 0
             ? `
           <div class="diff-group">
-            <div class="px-3 py-2 text-xs font-medium text-text-secondary bg-bg-tertiary border-b border-bg-elevated">
+            <div class="px-3 py-2 text-xs font-medium text-text-secondary bg-bg-tertiary border-b border-bg-elevated truncate">
               Changed in this session (${sessionCount})
             </div>
             ${sessionDiffs.map((d) => renderDiffBlock(d)).join("")}
@@ -536,7 +536,7 @@ function renderEmptyDiffPlaceholder(): string {
         <h2 class="text-sm font-semibold text-text-primary">Code Changes</h2>
         <span class="text-xs text-text-muted tabular-nums">0 files</span>
       </div>
-      <div id="diffs-container" class="bg-bg-secondary border border-bg-elevated rounded-lg">
+      <div id="diffs-container" class="bg-bg-secondary border border-bg-elevated rounded-lg overflow-hidden">
         <div class="flex items-center justify-center h-full text-text-muted text-sm py-8">
           No code changes yet
         </div>
