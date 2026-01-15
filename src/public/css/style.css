@@ -567,15 +567,6 @@ main {
   }
 }
 
-/* ==============================================
-   Floating Input - Minimal CSS for Tailwind gaps
-   ============================================== */
-
-/* Textarea in floating input needs font-family inheritance */
-#feedback-input {
-  font-family: inherit;
-}
-
 /* Toast notifications for feedback status */
 .feedback-toast {
   position: fixed;

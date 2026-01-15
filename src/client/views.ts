@@ -772,7 +772,7 @@ export function renderFeedbackInput(state: FeedbackInputState): string {
   }
 
   const pendingCount = pendingFeedback.filter(f => f.status === "pending").length;
-  const isMac = typeof navigator !== "undefined" && navigator.platform.includes("Mac");
+  const isMac = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac");
   const shortcutKey = isMac ? "⌘" : "Ctrl";
 
   // Status indicator for when Claude is working or messages are queued
