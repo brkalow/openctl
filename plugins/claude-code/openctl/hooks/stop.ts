@@ -7,31 +7,36 @@ import {
 } from "../lib/api";
 
 interface StopHookResponse {
-  decision: "block";
-  reason: string;
+  decision?: "block";
+  reason?: string;
 }
 
-const TIMEOUT_MS = 3000; // 3 second timeout
+const TIMEOUT_MS = 3000;
 
-// Always log to stderr for debugging (visible in verbose mode ctrl+o)
+// Log to stderr for debugging (visible in verbose mode ctrl+o)
 function log(msg: string): void {
   console.error(`[openctl:stop] ${msg}`);
 }
 
+// Output JSON response to stdout and exit
+function respond(response: StopHookResponse): never {
+  console.log(JSON.stringify(response));
+  process.exit(0);
+}
+
 async function main(): Promise<void> {
-  // Read stdin first (before checking config) to get Claude session ID
   const stdinInput = await readStdinInput();
 
   if (!stdinInput?.session_id) {
     log("No session_id in stdin");
-    process.exit(0);
+    respond({});
   }
 
   const config = loadConfig();
 
   if (!config) {
-    log(`No OPENCTL_SERVER_URL set`);
-    process.exit(0);
+    log("No OPENCTL_SERVER_URL set");
+    respond({});
   }
 
   try {
@@ -46,7 +51,7 @@ async function main(): Promise<void> {
 
     if (!response.pending || response.messages.length === 0) {
       log("No pending feedback");
-      process.exit(0);
+      respond({});
     }
 
     log(`Found ${response.messages.length} pending message(s)`);
@@ -54,27 +59,18 @@ async function main(): Promise<void> {
     // Batch all pending messages into a single injection
     const reason = formatBatchedFeedback(response.messages);
 
-    // Mark all as delivered using the Archive session ID from the response
+    // Mark all as delivered
     await Promise.all(
       response.messages.map((m) =>
         markFeedbackDelivered(config.serverUrl, response.session_id, m.id)
       )
     );
 
-    // Block Claude from stopping and inject the feedback
-    const output: StopHookResponse = {
-      decision: "block",
-      reason,
-    };
-
     log("Blocking stop to inject feedback");
-
-    // Output JSON to stdout with exit code 0 for structured control
-    console.log(JSON.stringify(output));
-    process.exit(0);
+    respond({ decision: "block", reason });
   } catch (err) {
     log(`Error: ${err}`);
-    process.exit(0);
+    respond({});
   }
 }
 
@@ -83,7 +79,6 @@ async function main(): Promise<void> {
  */
 function formatBatchedFeedback(messages: PendingFeedback[]): string {
   if (messages.length === 1) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return formatSingleFeedback(messages[0]!);
   }
 
