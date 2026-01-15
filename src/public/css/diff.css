@@ -1,15 +1,10 @@
 /* Diff Styles */
 .diff-file {
-  margin-bottom: 1rem;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius);
-  overflow: hidden;
+  /* Layout handled by Tailwind classes in views.ts */
 }
 
 .diff-file-header {
-  background: var(--bg-tertiary);
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--border-color);
+  /* Layout handled by Tailwind classes in views.ts */
 }
 
 .diff-file-header .filename {
