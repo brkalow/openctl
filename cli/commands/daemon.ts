@@ -14,7 +14,7 @@ export async function daemon(args: string[]): Promise<void> {
       return daemonStatus();
     default:
       console.log(`
-Usage: archive daemon <subcommand> [options]
+Usage: openctl daemon <subcommand> [options]
 
 Subcommands:
   start     Start the daemon
@@ -25,7 +25,7 @@ Options for 'start':
   --harness <name>       Harness adapter(s) to enable (default: all)
                          Can specify multiple: --harness claude-code --harness cursor
   --watch <paths>        Additional directories to watch
-  --server <url>         Archive server URL (default: from config)
+  --server <url>         Server URL (default: from config)
   --idle-timeout <sec>   Seconds before marking session complete (default: 300)
   --verbose              Enable verbose debug logging
       `);
@@ -54,7 +54,7 @@ async function daemonStart(args: string[]): Promise<void> {
     verbose: values.verbose || false,
   };
 
-  console.log("Starting archive daemon...");
+  console.log("Starting openctl daemon...");
   console.log(`  Server: ${options.server}`);
   console.log(`  Harnesses: ${options.harnesses.length ? options.harnesses.join(", ") : "all"}`);
   console.log(`  Idle timeout: ${options.idleTimeout}s`);

@@ -26,7 +26,7 @@ export async function repo(args: string[]): Promise<void> {
 
 function showHelp(): void {
   console.log(`
-Usage: archive repo <subcommand> [options]
+Usage: openctl repo <subcommand> [options]
 
 Subcommands:
   allow [path]    Allow a repository for automatic uploads
@@ -39,11 +39,11 @@ Options:
                   For 'list': show all servers
 
 Examples:
-  archive repo allow                    # Allow current directory
-  archive repo allow ~/projects/my-app  # Allow specific repo
-  archive repo deny                     # Deny current directory
-  archive repo list                     # List allowed repos
-  archive repo list --all               # List repos for all servers
+  openctl repo allow                    # Allow current directory
+  openctl repo allow ~/projects/my-app  # Allow specific repo
+  openctl repo deny                     # Deny current directory
+  openctl repo list                     # List allowed repos
+  openctl repo list --all               # List repos for all servers
   `);
 }
 
@@ -161,7 +161,7 @@ async function repoList(args: string[]): Promise<void> {
     if (repos.length === 0) {
       console.log(`No repositories allowed (${serverUrl})`);
       console.log(`\nTo allow a repository, run:`);
-      console.log(`  archive repo allow`);
+      console.log(`  openctl repo allow`);
       return;
     }
 

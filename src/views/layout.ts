@@ -4,14 +4,14 @@ export function layout(title: string, content: string, extraHead: string = ""): 
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(title)} - Claude Session Archive</title>
+  <title>${escapeHtml(title)} - openctl</title>
   <link rel="stylesheet" href="/css/style.css">
   ${extraHead}
 </head>
 <body>
   <header>
     <nav>
-      <a href="/" class="logo">Claude Session Archive</a>
+      <a href="/" class="logo">openctl</a>
     </nav>
   </header>
   <main>

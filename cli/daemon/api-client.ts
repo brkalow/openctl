@@ -1,5 +1,5 @@
 /**
- * API client for communicating with the archive server's live streaming endpoints.
+ * API client for communicating with the server's live streaming endpoints.
  * Includes retry logic with exponential backoff for resilience.
  */
 
@@ -123,7 +123,7 @@ export class ApiClient {
    */
   private getHeaders(additionalHeaders: Record<string, string> = {}): Record<string, string> {
     return {
-      "X-Archive-Client-ID": this.clientId,
+      "X-Openctl-Client-ID": this.clientId,
       ...additionalHeaders,
     };
   }
