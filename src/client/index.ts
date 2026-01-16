@@ -1,5 +1,5 @@
 import { Router } from "./router";
-import { renderSessionList, renderSessionDetail, renderNotFound, renderSingleMessage, renderConnectionStatusHtml, renderDiffPanel, escapeHtml, renderFeedbackInput, renderSessionStatus, type FeedbackInputState } from "./views";
+import { renderSessionList, renderSessionDetail, renderNotFound, renderSingleMessage, renderConnectionStatusHtml, renderDiffPanel, escapeHtml, renderFeedbackInput, renderSessionStatus, renderComponentsShowcase, type FeedbackInputState } from "./views";
 import { formatMarkdown } from "./blocks";
 import type { Session, Message, Diff, Review, Annotation, AnnotationType } from "../db/schema";
 // Import @pierre/diffs - this registers the web component and provides FileDiff class
@@ -173,6 +173,11 @@ router.on("/s/:shareToken", async (params) => {
 
   app.innerHTML = renderSessionDetail(data);
   attachSessionDetailHandlers(data.session.id);
+});
+
+router.on("/_components", async () => {
+  const app = document.getElementById("app")!;
+  app.innerHTML = renderComponentsShowcase();
 });
 
 // Event handler attachments

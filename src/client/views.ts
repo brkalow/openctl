@@ -33,7 +33,7 @@ export function renderSessionList(sessions: Session[]): string {
             type="search"
             id="search-input"
             placeholder="Search sessions..."
-            class="w-full bg-bg-secondary border border-bg-elevated rounded-lg px-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-primary focus:ring-1 focus:ring-accent-primary/20 transition-all"
+            class="w-full bg-bg-secondary border border-bg-elevated rounded-lg px-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline focus:outline-2 focus:outline-accent-primary focus:outline-offset-2 transition-all"
           />
         </div>
       </div>
@@ -821,14 +821,14 @@ export function renderFeedbackInput(state: FeedbackInputState): string {
   return `
     <div id="feedback-input-container" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] flex flex-col items-center">
       ${statusBadge}
-      <div class="flex items-end w-[min(600px,calc(100vw-2rem))] bg-bg-secondary border border-bg-elevated rounded-2xl px-4 py-2 shadow-lg transition-all duration-200 focus-within:border-text-muted/50 focus-within:shadow-xl">
+      <div class="flex items-center w-[min(600px,calc(100vw-2rem))] bg-bg-secondary border border-bg-elevated rounded-2xl px-4 py-2 shadow-lg transition-all duration-200 focus-within:outline focus-within:outline-2 focus-within:outline-accent-primary focus-within:outline-offset-2">
         <textarea
           id="feedback-input"
-          class="flex-1 bg-transparent text-text-primary text-[15px] leading-relaxed placeholder:text-text-muted resize-none border-none outline-none py-1 min-h-[24px] max-h-[150px]"
+          class="flex-1 bg-transparent text-text-primary text-[15px] leading-relaxed placeholder:text-text-muted resize-none border-none outline-none focus-visible:outline-none py-1 min-h-[24px] max-h-[150px]"
           placeholder="Ask a question..."
           rows="1"
         ></textarea>
-        <div class="flex items-center gap-2 pb-0.5 ml-3">
+        <div class="flex items-center gap-2 ml-3">
           <kbd class="hidden sm:inline-flex text-[11px] text-text-muted font-mono px-2 py-1 bg-bg-tertiary rounded">${shortcutKey}I</kbd>
           <button
             id="feedback-submit"
@@ -873,4 +873,625 @@ export function renderInteractiveBadge(): string {
     </svg>
     Interactive
   </span>`;
+}
+
+// Components Showcase
+export function renderComponentsShowcase(): string {
+  return `
+    <div class="max-w-[1400px] mx-auto px-6 lg:px-10 py-8">
+      <div class="mb-10">
+        <h1 class="text-2xl font-semibold text-text-primary mb-2">Component Library</h1>
+        <p class="text-text-secondary">Design tokens and UI primitives for the Claude Session Archive.</p>
+      </div>
+
+      <!-- Table of Contents -->
+      <nav class="mb-12 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+        <h2 class="text-sm font-semibold text-text-primary mb-3">Contents</h2>
+        <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+          <a href="#colors" class="text-accent-primary hover:underline">Colors</a>
+          <a href="#typography" class="text-accent-primary hover:underline">Typography</a>
+          <a href="#primitives" class="text-accent-primary hover:underline">Primitives</a>
+          <a href="#components" class="text-accent-primary hover:underline">Components</a>
+          <a href="#icons" class="text-accent-primary hover:underline">Icons</a>
+          <a href="#session-header" class="text-accent-primary hover:underline">Session Header</a>
+        </div>
+      </nav>
+
+      ${renderColorsSection()}
+      ${renderTypographySection()}
+      ${renderPrimitivesSection()}
+      ${renderComponentsSection()}
+      ${renderIconsSection()}
+    </div>
+  `;
+}
+
+function renderColorsSection(): string {
+  const backgroundColors = [
+    { name: "bg-primary", value: "#0c0c0c", class: "bg-bg-primary" },
+    { name: "bg-secondary", value: "#141414", class: "bg-bg-secondary" },
+    { name: "bg-tertiary", value: "#1a1a1a", class: "bg-bg-tertiary" },
+    { name: "bg-elevated", value: "#222222", class: "bg-bg-elevated" },
+    { name: "bg-hover", value: "#2a2a2a", class: "bg-bg-hover" },
+  ];
+
+  const textColors = [
+    { name: "text-primary", value: "#e4e4e7", class: "bg-text-primary" },
+    { name: "text-secondary", value: "#a1a1aa", class: "bg-text-secondary" },
+    { name: "text-muted", value: "#52525b", class: "bg-text-muted" },
+  ];
+
+  const accentColors = [
+    { name: "accent-primary", value: "#67e8f9", class: "bg-accent-primary" },
+    { name: "accent-secondary", value: "#c4b5fd", class: "bg-accent-secondary" },
+  ];
+
+  const semanticColors = [
+    { name: "diff-add", value: "#86efac", class: "bg-diff-add" },
+    { name: "diff-del", value: "#fda4af", class: "bg-diff-del" },
+    { name: "diff-hunk", value: "#93c5fd", class: "bg-diff-hunk" },
+    { name: "role-user", value: "#93c5fd", class: "bg-role-user" },
+    { name: "role-assistant", value: "#86efac", class: "bg-role-assistant" },
+  ];
+
+  const renderSwatch = (color: { name: string; value: string; class: string }) => `
+    <div class="flex flex-col">
+      <div class="${color.class} w-full h-16 rounded-lg border border-bg-elevated"></div>
+      <div class="mt-2">
+        <div class="text-sm font-medium text-text-primary">${color.name}</div>
+        <div class="text-xs font-mono text-text-muted">${color.value}</div>
+      </div>
+    </div>
+  `;
+
+  return `
+    <section id="colors" class="mb-16">
+      <h2 class="text-xl font-semibold text-text-primary mb-6 pb-2 border-b border-bg-elevated">Colors</h2>
+
+      <div class="space-y-8">
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Background</h3>
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
+            ${backgroundColors.map(renderSwatch).join("")}
+          </div>
+        </div>
+
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Text</h3>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            ${textColors.map(renderSwatch).join("")}
+          </div>
+        </div>
+
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Accent</h3>
+          <div class="grid grid-cols-2 gap-4">
+            ${accentColors.map(renderSwatch).join("")}
+          </div>
+        </div>
+
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Semantic</h3>
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
+            ${semanticColors.map(renderSwatch).join("")}
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderTypographySection(): string {
+  return `
+    <section id="typography" class="mb-16">
+      <h2 class="text-xl font-semibold text-text-primary mb-6 pb-2 border-b border-bg-elevated">Typography</h2>
+
+      <div class="space-y-8">
+        <!-- Font Families -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Font Families</h3>
+          <div class="grid gap-4">
+            <div class="p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+              <div class="text-xs text-text-muted uppercase tracking-wide mb-2">Sans (Default)</div>
+              <div class="text-2xl text-text-primary font-sans">The quick brown fox jumps over the lazy dog</div>
+              <div class="text-xs font-mono text-text-muted mt-2">system-ui, -apple-system, "Segoe UI", Roboto...</div>
+            </div>
+            <div class="p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+              <div class="text-xs text-text-muted uppercase tracking-wide mb-2">Mono (Code)</div>
+              <div class="text-2xl text-text-primary font-mono">The quick brown fox jumps over the lazy dog</div>
+              <div class="text-xs font-mono text-text-muted mt-2">"Berkeley Mono", "JetBrains Mono", "Fira Code"...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Heading Scale -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Heading Scale</h3>
+          <div class="space-y-4 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+            <div class="flex items-baseline gap-4">
+              <span class="text-xs text-text-muted w-16 shrink-0">2xl</span>
+              <span class="text-2xl font-semibold text-text-primary">Session Archive</span>
+            </div>
+            <div class="flex items-baseline gap-4">
+              <span class="text-xs text-text-muted w-16 shrink-0">xl</span>
+              <span class="text-xl font-semibold text-text-primary">Session Archive</span>
+            </div>
+            <div class="flex items-baseline gap-4">
+              <span class="text-xs text-text-muted w-16 shrink-0">lg</span>
+              <span class="text-lg font-medium text-text-primary">Session Archive</span>
+            </div>
+            <div class="flex items-baseline gap-4">
+              <span class="text-xs text-text-muted w-16 shrink-0">base</span>
+              <span class="text-base text-text-primary">Session Archive</span>
+            </div>
+            <div class="flex items-baseline gap-4">
+              <span class="text-xs text-text-muted w-16 shrink-0">sm</span>
+              <span class="text-sm text-text-primary">Session Archive</span>
+            </div>
+            <div class="flex items-baseline gap-4">
+              <span class="text-xs text-text-muted w-16 shrink-0">xs</span>
+              <span class="text-xs text-text-primary">Session Archive</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Font Weights -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Font Weights</h3>
+          <div class="space-y-3 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+            <div class="flex items-baseline gap-4">
+              <span class="text-xs text-text-muted w-20 shrink-0">normal</span>
+              <span class="text-lg font-normal text-text-primary">The quick brown fox</span>
+            </div>
+            <div class="flex items-baseline gap-4">
+              <span class="text-xs text-text-muted w-20 shrink-0">medium</span>
+              <span class="text-lg font-medium text-text-primary">The quick brown fox</span>
+            </div>
+            <div class="flex items-baseline gap-4">
+              <span class="text-xs text-text-muted w-20 shrink-0">semibold</span>
+              <span class="text-lg font-semibold text-text-primary">The quick brown fox</span>
+            </div>
+            <div class="flex items-baseline gap-4">
+              <span class="text-xs text-text-muted w-20 shrink-0">bold</span>
+              <span class="text-lg font-bold text-text-primary">The quick brown fox</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Text Colors -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Text Colors</h3>
+          <div class="space-y-3 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+            <div class="text-text-primary">Primary text for main content</div>
+            <div class="text-text-secondary">Secondary text for supporting content</div>
+            <div class="text-text-muted">Muted text for less important info</div>
+            <div class="text-accent-primary">Accent text for links and highlights</div>
+            <div class="text-accent-secondary">Secondary accent for special elements</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderPrimitivesSection(): string {
+  return `
+    <section id="primitives" class="mb-16">
+      <h2 class="text-xl font-semibold text-text-primary mb-6 pb-2 border-b border-bg-elevated">Primitives</h2>
+
+      <div class="space-y-8">
+        <!-- Badges -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Badges</h3>
+          <div class="flex flex-wrap gap-3 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+            <span class="px-1.5 py-0.5 bg-green-500/20 text-green-400 text-xs font-medium rounded flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>
+              LIVE
+            </span>
+            <span class="px-1.5 py-0.5 bg-accent-primary/10 text-accent-primary text-xs font-medium rounded">PR</span>
+            ${renderInteractiveBadge()}
+            <span class="px-2 py-0.5 rounded text-xs font-medium bg-accent-primary/20 text-accent-primary">suggestion</span>
+            <span class="px-2 py-0.5 rounded text-xs font-medium bg-diff-del/20 text-diff-del">issue</span>
+            <span class="px-2 py-0.5 rounded text-xs font-medium bg-diff-add/20 text-diff-add">good</span>
+            <span class="px-2 py-0.5 rounded text-xs font-medium bg-accent-secondary/20 text-accent-secondary">question</span>
+          </div>
+        </div>
+
+        <!-- Buttons -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Buttons</h3>
+          <div class="flex flex-wrap gap-4 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+            <button class="px-4 py-2 bg-accent-primary text-bg-primary text-sm font-medium rounded-lg hover:bg-accent-primary/90 transition-colors">
+              Primary Button
+            </button>
+            <button class="px-4 py-2 bg-bg-tertiary text-text-primary text-sm font-medium rounded-lg border border-bg-elevated hover:bg-bg-elevated transition-colors">
+              Secondary Button
+            </button>
+            <button class="px-4 py-2 text-text-muted hover:text-text-primary text-sm transition-colors">
+              Text Button
+            </button>
+            <button class="p-2 text-text-muted hover:text-text-primary hover:bg-bg-tertiary rounded transition-colors">
+              ${icons.copy}
+            </button>
+          </div>
+        </div>
+
+        <!-- Inputs -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Inputs</h3>
+          <div class="space-y-4 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+            <div>
+              <input
+                type="search"
+                placeholder="Search sessions..."
+                class="w-full max-w-sm bg-bg-secondary border border-bg-elevated rounded-lg px-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline focus:outline-2 focus:outline-accent-primary focus:outline-offset-2 transition-all"
+              />
+            </div>
+            <div class="flex items-center w-full max-w-md bg-bg-secondary border border-bg-elevated rounded-2xl px-4 py-2 transition-all duration-200 focus-within:outline focus-within:outline-2 focus-within:outline-accent-primary focus-within:outline-offset-2">
+              <textarea
+                class="flex-1 bg-transparent text-text-primary text-[15px] leading-relaxed placeholder:text-text-muted resize-none border-none outline-none focus-visible:outline-none py-1 min-h-[24px]"
+                placeholder="Ask a question..."
+                rows="1"
+              ></textarea>
+              <button class="w-7 h-7 flex items-center justify-center rounded-full bg-text-muted text-bg-primary ml-3">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 19V5M5 12l7-7 7 7"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Border Radius -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Border Radius</h3>
+          <div class="flex flex-wrap gap-6 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+            <div class="text-center">
+              <div class="w-16 h-16 bg-bg-elevated rounded-sm border border-bg-hover"></div>
+              <div class="text-xs text-text-muted mt-2">sm (6px)</div>
+            </div>
+            <div class="text-center">
+              <div class="w-16 h-16 bg-bg-elevated rounded-md border border-bg-hover"></div>
+              <div class="text-xs text-text-muted mt-2">md (8px)</div>
+            </div>
+            <div class="text-center">
+              <div class="w-16 h-16 bg-bg-elevated rounded-lg border border-bg-hover"></div>
+              <div class="text-xs text-text-muted mt-2">lg (12px)</div>
+            </div>
+            <div class="text-center">
+              <div class="w-16 h-16 bg-bg-elevated rounded-full border border-bg-hover"></div>
+              <div class="text-xs text-text-muted mt-2">full</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Code -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Code</h3>
+          <div class="space-y-4 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+            <div>
+              <div class="text-xs text-text-muted mb-2">Inline code</div>
+              <p class="text-text-primary">
+                Run <code class="px-1.5 py-0.5 bg-bg-elevated rounded text-accent-primary text-[13px]">claude --resume abc123</code> to continue.
+              </p>
+            </div>
+            <div>
+              <div class="text-xs text-text-muted mb-2">Code block</div>
+              <pre class="p-3 bg-bg-primary rounded-md overflow-x-auto"><code class="text-[13px] font-mono text-text-primary">function greet(name: string) {
+  return \`Hello, \${name}!\`;
+}</code></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+// Mock data for component library - reuses actual render functions
+function getMockSessions(): Session[] {
+  const now = new Date().toISOString();
+  return [
+    {
+      id: "mock-1",
+      title: "Implement user authentication flow",
+      description: "Added OAuth2 integration with Google and GitHub providers",
+      claude_session_id: "abc123",
+      pr_url: "https://github.com/example/repo/pull/42",
+      share_token: null,
+      project_path: "~/projects/auth",
+      model: "claude-sonnet-4-20250514",
+      harness: "Claude Code",
+      repo_url: "github.com/example/repo",
+      status: "archived",
+      last_activity_at: null,
+      client_id: null,
+      interactive: false,
+      created_at: now,
+      updated_at: now,
+    },
+    {
+      id: "mock-2",
+      title: "Debug performance issues",
+      description: null,
+      claude_session_id: "def456",
+      pr_url: null,
+      share_token: null,
+      project_path: null,
+      model: "claude-sonnet-4-20250514",
+      harness: "Claude Code",
+      repo_url: null,
+      status: "live",
+      last_activity_at: now, // Recent activity for LIVE badge
+      client_id: null,
+      interactive: false,
+      created_at: now,
+      updated_at: now,
+    },
+    {
+      id: "mock-3",
+      title: "Refactor database schema",
+      description: "Migrating from SQLite to PostgreSQL",
+      claude_session_id: "ghi789",
+      pr_url: null,
+      share_token: null,
+      project_path: "~/projects/api",
+      model: "claude-sonnet-4-20250514",
+      harness: "Claude Code",
+      repo_url: "github.com/example/api",
+      status: "live",
+      last_activity_at: now,
+      client_id: null,
+      interactive: true,
+      created_at: now,
+      updated_at: now,
+    },
+  ];
+}
+
+function getMockMessages(): Message[] {
+  return [
+    {
+      id: 1,
+      session_id: "mock-1",
+      role: "user",
+      content: "Can you help me fix the build error?",
+      content_blocks: [],
+      timestamp: new Date().toISOString(),
+      message_index: 0,
+    },
+    {
+      id: 2,
+      session_id: "mock-1",
+      role: "assistant",
+      content: "Of course! Let me take a look at the error message. It looks like there's a type mismatch in the `handleSubmit` function.",
+      content_blocks: [],
+      timestamp: new Date().toISOString(),
+      message_index: 1,
+    },
+    {
+      id: 3,
+      session_id: "mock-1",
+      role: "system",
+      content: "Session resumed from previous conversation.",
+      content_blocks: [],
+      timestamp: new Date().toISOString(),
+      message_index: 2,
+    },
+  ];
+}
+
+function getMockHeaderSession(): Session {
+  const now = new Date().toISOString();
+  return {
+    id: "mock-header",
+    title: "Implement user authentication with OAuth2",
+    description: "Adding secure authentication flow",
+    claude_session_id: "abc123",
+    pr_url: "https://github.com/anthropics/claude-code/pull/42",
+    share_token: null,
+    project_path: "~/projects/auth",
+    model: "claude-sonnet-4-20250514",
+    harness: "Claude Code",
+    repo_url: "github.com/anthropics/claude-code",
+    status: "live",
+    last_activity_at: now,
+    client_id: null,
+    interactive: true,
+    created_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(), // 5 minutes ago
+    updated_at: now,
+  };
+}
+
+function renderComponentsSection(): string {
+  const mockSessions = getMockSessions();
+  const mockMessages = getMockMessages();
+
+  return `
+    <section id="components" class="mb-16">
+      <h2 class="text-xl font-semibold text-text-primary mb-6 pb-2 border-b border-bg-elevated">Components</h2>
+
+      <div class="space-y-8">
+        <!-- Session Card -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Session Card</h3>
+          <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            ${mockSessions.map(renderSessionCard).join("")}
+          </div>
+        </div>
+
+        <!-- Messages -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Messages</h3>
+          <div class="bg-bg-secondary border border-bg-elevated rounded-lg overflow-hidden">
+            <div class="p-4">
+              ${mockMessages.map((msg, idx) =>
+                renderMessageBlock(msg, mockMessages, idx, idx > 0 ? mockMessages[idx - 1]?.role ?? null : null)
+              ).join("")}
+            </div>
+          </div>
+        </div>
+
+        <!-- Status Indicators -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Status Indicators</h3>
+          <div class="flex flex-wrap gap-6 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+            <!-- Live indicator -->
+            ${renderLiveIndicator()}
+            <!-- Connected -->
+            ${renderConnectionStatusHtml(true)}
+            <!-- Reconnecting -->
+            ${renderConnectionStatusHtml(false)}
+            <!-- Typing indicator (visible for demo) -->
+            <div class="flex items-center gap-2 py-3 px-4 text-text-muted border-l-2 border-role-assistant">
+              <div class="flex gap-1">
+                <span class="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style="animation-delay: 0ms"></span>
+                <span class="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style="animation-delay: 150ms"></span>
+                <span class="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style="animation-delay: 300ms"></span>
+              </div>
+              <span class="text-sm">Claude is working...</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Diff Stats -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Diff Stats</h3>
+          <div class="flex flex-wrap gap-4 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+            <div class="flex items-center gap-2 text-xs font-mono tabular-nums">
+              <span class="text-diff-del">-42</span>
+              <span class="text-diff-add">+128</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="w-3 h-3 rounded bg-diff-add-bg border border-diff-add/30"></span>
+              <span class="text-xs text-text-muted">Addition background</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="w-3 h-3 rounded bg-diff-del-bg border border-diff-del/30"></span>
+              <span class="text-xs text-text-muted">Deletion background</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Toast -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Toast Notifications</h3>
+          <div class="flex flex-wrap gap-4 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+            <div class="px-4 py-2 bg-bg-tertiary border border-bg-elevated text-text-primary text-sm rounded-lg shadow-lg">
+              Copied to clipboard
+            </div>
+            <div class="px-4 py-2 bg-diff-add/20 border border-diff-add/30 text-diff-add text-sm rounded-lg shadow-lg">
+              Message sent to session
+            </div>
+            <div class="px-4 py-2 bg-diff-del/20 border border-diff-del/30 text-diff-del text-sm rounded-lg shadow-lg">
+              Message was declined
+            </div>
+          </div>
+        </div>
+
+        <!-- Session Detail Header -->
+        <div id="session-header">
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Session Detail Header</h3>
+          <div class="border border-bg-elevated rounded-lg overflow-hidden">
+            ${renderHeader(
+              getMockHeaderSession(),
+              formatDate(getMockHeaderSession().created_at),
+              "claude --resume abc123"
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderIconsSection(): string {
+  return `
+    <section id="icons" class="mb-16">
+      <h2 class="text-xl font-semibold text-text-primary mb-6 pb-2 border-b border-bg-elevated">Icons</h2>
+
+      <div class="space-y-8">
+        <!-- Provider Icons -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Provider Icons</h3>
+          <div class="flex flex-wrap gap-6 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+            <div class="flex flex-col items-center gap-2">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-text-primary">
+                ${icons.anthropic}
+              </div>
+              <span class="text-xs text-text-muted">Anthropic</span>
+            </div>
+            <div class="flex flex-col items-center gap-2">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-text-primary">
+                ${icons.openai}
+              </div>
+              <span class="text-xs text-text-muted">OpenAI</span>
+            </div>
+            <div class="flex flex-col items-center gap-2">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-text-primary">
+                ${icons.google}
+              </div>
+              <span class="text-xs text-text-muted">Google</span>
+            </div>
+            <div class="flex flex-col items-center gap-2">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-text-primary">
+                ${icons.github}
+              </div>
+              <span class="text-xs text-text-muted">GitHub</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- UI Icons -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">UI Icons</h3>
+          <div class="flex flex-wrap gap-6 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+            <div class="flex flex-col items-center gap-2">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-text-primary">
+                ${icons.copy}
+              </div>
+              <span class="text-xs text-text-muted">Copy</span>
+            </div>
+            <div class="flex flex-col items-center gap-2">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-text-primary">
+                ${icons.terminal}
+              </div>
+              <span class="text-xs text-text-muted">Terminal</span>
+            </div>
+            <div class="flex flex-col items-center gap-2">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-text-primary">
+                ${icons.api}
+              </div>
+              <span class="text-xs text-text-muted">API</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Message Role Icons -->
+        <div>
+          <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Message Role Icons</h3>
+          <div class="flex flex-wrap gap-6 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+            <div class="flex flex-col items-center gap-2">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-role-user">
+                ${messageIcons.user}
+              </div>
+              <span class="text-xs text-text-muted">User</span>
+            </div>
+            <div class="flex flex-col items-center gap-2">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-role-assistant">
+                ${messageIcons.assistant}
+              </div>
+              <span class="text-xs text-text-muted">Assistant</span>
+            </div>
+            <div class="flex flex-col items-center gap-2">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-text-muted">
+                ${messageIcons.system}
+              </div>
+              <span class="text-xs text-text-muted">System</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
 }
