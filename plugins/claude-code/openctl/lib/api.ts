@@ -13,12 +13,12 @@ export interface PendingFeedback {
 export interface PendingFeedbackResponse {
   pending: boolean;
   messages: PendingFeedback[];
-  session_id: string; // Archive session ID
+  session_id: string; // openctl session ID
 }
 
 /**
  * Fetch pending feedback by Claude session ID.
- * The server looks up the Archive session using the claude_session_id field.
+ * The server looks up the openctl session using the claude_session_id field.
  */
 export async function fetchPendingFeedbackByClaudeSession(
   serverUrl: string,
@@ -38,14 +38,14 @@ export async function fetchPendingFeedbackByClaudeSession(
 
 /**
  * Mark a feedback message as delivered.
- * Uses the Archive session ID returned from fetchPendingFeedbackByClaudeSession.
+ * Uses the openctl session ID returned from fetchPendingFeedbackByClaudeSession.
  */
 export async function markFeedbackDelivered(
   serverUrl: string,
-  archiveSessionId: string,
+  openctlSessionId: string,
   messageId: string
 ): Promise<void> {
-  const url = `${serverUrl}/api/sessions/${archiveSessionId}/feedback/${messageId}/delivered`;
+  const url = `${serverUrl}/api/sessions/${openctlSessionId}/feedback/${messageId}/delivered`;
 
   await fetch(url, { method: "POST" });
 }

@@ -136,7 +136,7 @@ export class SessionTracker {
       console.log(`  Repo: ${repoId || "(not a git repo)"}`);
       console.log();
       console.log(`To allow this repository, run:`);
-      console.log(`  archive repo allow ${sessionInfo.projectPath}`);
+      console.log(`  openctl repo allow ${sessionInfo.projectPath}`);
       console.log();
       return 'skip';
     }

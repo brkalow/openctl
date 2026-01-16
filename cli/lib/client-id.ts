@@ -6,7 +6,7 @@ function getClientIdPath(): string {
   if (!home) {
     throw new Error("HOME environment variable not set - cannot determine client ID path");
   }
-  return join(home, ".archive", "client-id");
+  return join(home, ".openctl", "client-id");
 }
 
 /**

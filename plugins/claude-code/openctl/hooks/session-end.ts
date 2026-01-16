@@ -26,7 +26,7 @@ async function main(): Promise<void> {
   const config = loadConfig();
   debug(`config: ${JSON.stringify(config)}`);
 
-  // Not an Archive session (no env vars set) - exit
+  // Not an openctl session (no env vars set) - exit
   if (!config) {
     debug("No config - exiting");
     process.exit(0);
