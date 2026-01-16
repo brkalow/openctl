@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build CLI binaries
+        run: bun run scripts/build-cli.ts --test --archive
+
+      - name: Get version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b
+        with:
+          name: ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(github.ref, '-') }}
+          generate_release_notes: true
+          files: |
+            dist/openctl-darwin-arm64.tar.gz
+            dist/openctl-darwin-x64.tar.gz
+            dist/openctl-linux-x64.tar.gz
+            dist/openctl-linux-arm64.tar.gz
+            dist/openctl-windows-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
