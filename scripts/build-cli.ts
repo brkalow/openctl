@@ -31,9 +31,24 @@ async function getVersion(): Promise<string> {
   return pkg.version || "0.0.0";
 }
 
+async function getGitSha(): Promise<string> {
+  // Only embed SHA in CI builds (releases), local builds show "local"
+  if (!process.env.CI) {
+    return "local";
+  }
+  try {
+    const result = await $`git rev-parse --short=7 HEAD`.quiet();
+    return result.text().trim();
+  } catch {
+    // Not a git repo or git not available
+    return "local";
+  }
+}
+
 async function build() {
   const version = await getVersion();
-  console.log(`Building openctl v${version} for all platforms...\n`);
+  const gitSha = await getGitSha();
+  console.log(`Building openctl v${version} (${gitSha}) for all platforms...\n`);
 
   // Clean and create dist directory
   await rm(DIST_DIR, { recursive: true, force: true });
@@ -55,6 +70,7 @@ async function build() {
         minify: true,
         define: {
           "process.env.OPENCTL_VERSION": JSON.stringify(version),
+          "process.env.OPENCTL_GIT_SHA": JSON.stringify(gitSha),
         },
       });
 
@@ -134,6 +150,12 @@ async function smokeTest() {
   const versionOutput = versionResult.text().trim();
   if (!versionOutput.includes(version)) {
     console.error(`  FAIL: Expected version "${version}" in output, got: "${versionOutput}"`);
+    process.exit(1);
+  }
+  // Verify build info is embedded (SHA in CI, "local" otherwise)
+  const buildInfoMatch = versionOutput.match(/\(([a-f0-9]{7}|local)\)$/);
+  if (!buildInfoMatch) {
+    console.error(`  FAIL: Expected build info (SHA or 'local') in output, got: "${versionOutput}"`);
     process.exit(1);
   }
   console.log(`  PASS: ${versionOutput}`);

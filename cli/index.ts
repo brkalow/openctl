@@ -57,7 +57,9 @@ Run 'openctl <command> --help' for more information.
       process.env.OPENCTL_VERSION ||
       (await import("../package.json")).version ||
       "0.0.0";
-    console.log(`openctl ${version}`);
+    // Use build-time git SHA if available, otherwise show "local"
+    const gitSha = process.env.OPENCTL_GIT_SHA || "local";
+    console.log(`openctl ${version} (${gitSha})`);
     process.exit(0);
   }
 
