@@ -357,17 +357,25 @@ function renderToolUseBlock(
   block: ToolUseBlock,
   result?: ToolResultBlock
 ): string {
+  // Check if result is attached directly to the block (CLI adapter format)
+  // and convert to ToolResultBlock format for consistent rendering
+  const effectiveResult: ToolResultBlock | undefined = result ?? (
+    block.result !== undefined
+      ? { type: "tool_result", tool_use_id: block.id, content: block.result, is_error: block.is_error }
+      : undefined
+  );
+
   // Dispatch to special renderers
   switch (block.name) {
     case "mcp__conductor__AskUserQuestion":
     case "AskUserQuestion":
-      return renderAskUserQuestion(block, result);
+      return renderAskUserQuestion(block, effectiveResult);
     case "TodoWrite":
       return renderTodoWrite(block);
     case "Task":
-      return renderTaskBlock(block, result);
+      return renderTaskBlock(block, effectiveResult);
     default:
-      return renderGenericToolBlock(block, result);
+      return renderGenericToolBlock(block, effectiveResult);
   }
 }
 

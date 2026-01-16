@@ -190,6 +190,9 @@ export type ToolUseBlock = {
   id: string;
   name: string;
   input: Record<string, unknown>;
+  // Result can be attached directly by the CLI adapter
+  result?: string;
+  is_error?: boolean;
 };
 
 export type ToolResultBlock = {

@@ -106,9 +106,11 @@ function renderSessionCard(session: Session): string {
       <div class="flex items-center gap-2 text-xs text-text-muted">
         <span>${date}</span>
         ${
-          session.project_path
-            ? `<span class="truncate font-mono text-[11px]" data-project>${escapeHtml(session.project_path)}</span>`
-            : ""
+          session.repo_url && isGitHubUrl(session.repo_url)
+            ? `<span class="truncate font-mono text-[11px] flex items-center gap-1" data-project>${icons.github}<span>${escapeHtml(extractRepoName(session.repo_url))}</span></span>`
+            : session.project_path
+              ? `<span class="truncate font-mono text-[11px]" data-project>${escapeHtml(truncatePath(session.project_path))}</span>`
+              : ""
         }
       </div>
     </a>
@@ -486,7 +488,7 @@ export function renderDiffPanel(diffs: Diff[], review?: ReviewWithCount | null):
           sessionCount > 0
             ? `
           <div class="diff-group">
-            <div class="px-3 py-2 text-xs font-medium text-text-secondary bg-bg-tertiary border-b border-bg-elevated truncate">
+            <div class="px-3 py-2 text-xs font-medium text-text-secondary bg-bg-tertiary truncate">
               Changed in this session (${sessionCount})
             </div>
             ${sessionDiffs.map((d) => renderDiffBlock(d)).join("")}
