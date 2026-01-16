@@ -2,14 +2,38 @@
 
 A platform for storing, viewing, and sharing Claude Code sessions. Includes a web viewer with live streaming support and a CLI for uploading sessions.
 
-## Installation
+## CLI Installation
+
+Install the `openctl` CLI with the install script:
 
 ```bash
-# Install dependencies
+curl -fsSL https://openctl.dev/setup/install.sh | bash
+```
+
+This downloads the latest release for your platform and installs it to `/usr/local/bin`.
+
+### Options
+
+```bash
+# Install to a custom directory
+curl -fsSL https://openctl.dev/setup/install.sh | INSTALL_DIR=~/.local/bin bash
+```
+
+### From Source
+
+If you prefer to build from source:
+
+```bash
+# Clone and install dependencies
+git clone https://github.com/brkalow/openctl.git
+cd openctl
 bun install
 
-# Link the CLI globally
-bun link
+# Build the CLI
+bun run build:cli
+
+# Install from local build
+LOCAL_DIST=./dist ./install.sh
 ```
 
 ## Quick Start
@@ -137,9 +161,15 @@ Fields:
 ## Development
 
 ```bash
+# Install dependencies
+bun install
+
 # Run tests
 bun test
 
 # Start dev server (uses $PORT env var to avoid conflicts)
 PORT=3001 bun run dev
+
+# Link CLI for local development
+bun link
 ```
