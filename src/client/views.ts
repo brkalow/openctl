@@ -33,7 +33,7 @@ export function renderSessionList(sessions: Session[]): string {
             type="search"
             id="search-input"
             placeholder="Search sessions..."
-            class="w-full bg-bg-secondary border border-bg-elevated rounded-lg px-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline focus:outline-2 focus:outline-accent-primary focus:outline-offset-2 transition-all"
+            class="w-full bg-bg-secondary border border-bg-elevated rounded-md px-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline focus:outline-2 focus:outline-accent-primary focus:outline-offset-2 transition-all"
           />
         </div>
       </div>
@@ -45,7 +45,7 @@ export function renderSessionList(sessions: Session[]): string {
 function renderEmptyState(): string {
   return `
     <div class="flex flex-col items-center justify-center py-16 text-center">
-      <div class="w-16 h-16 mb-4 rounded-full bg-bg-secondary flex items-center justify-center">
+      <div class="w-16 h-16 mb-4 rounded-md bg-bg-secondary flex items-center justify-center">
         <svg class="w-8 h-8 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
         </svg>
@@ -80,7 +80,7 @@ function renderSessionCard(session: Session): string {
   return `
     <a
       href="/sessions/${escapeHtml(session.id)}"
-      class="block bg-bg-secondary border border-bg-elevated rounded-lg p-4 hover:bg-bg-tertiary hover:border-bg-hover transition-colors group ${isLive ? "border-l-2 border-l-green-500" : ""}"
+      class="block bg-bg-secondary border border-bg-elevated rounded-md p-4 hover:bg-bg-tertiary hover:border-bg-hover transition-colors group ${isLive ? "border-l-2 border-l-green-500" : ""}"
       data-session-card
     >
       <div class="flex items-start justify-between gap-3 mb-2">
@@ -287,7 +287,7 @@ function renderNewMessagesButton(): string {
     <button
       id="new-messages-btn"
       class="hidden fixed bottom-8 left-1/2 -translate-x-1/2
-             px-4 py-2 bg-accent-primary text-bg-primary text-sm font-medium rounded-full
+             px-4 py-2 bg-accent-primary text-bg-primary text-sm font-medium rounded
              shadow-lg hover:bg-accent-primary/90 transition-all z-50"
     >
       New messages
@@ -481,7 +481,7 @@ export function renderDiffPanel(diffs: Diff[], review?: ReviewWithCount | null):
         <h2 class="text-sm font-semibold text-text-primary">Code Changes</h2>
         <span class="text-xs text-text-muted tabular-nums">${totalCount} file${totalCount !== 1 ? "s" : ""}</span>
       </div>
-      <div id="diffs-container" class="bg-bg-secondary border border-bg-elevated rounded-lg overflow-hidden">
+      <div id="diffs-container" class="bg-bg-secondary border border-bg-elevated rounded-md overflow-hidden">
         ${
           sessionCount > 0
             ? `
@@ -536,7 +536,7 @@ function renderEmptyDiffPlaceholder(): string {
         <h2 class="text-sm font-semibold text-text-primary">Code Changes</h2>
         <span class="text-xs text-text-muted tabular-nums">0 files</span>
       </div>
-      <div id="diffs-container" class="bg-bg-secondary border border-bg-elevated rounded-lg overflow-hidden">
+      <div id="diffs-container" class="bg-bg-secondary border border-bg-elevated rounded-md overflow-hidden">
         <div class="flex items-center justify-center h-full text-text-muted text-sm py-8">
           No code changes yet
         </div>
@@ -547,7 +547,7 @@ function renderEmptyDiffPlaceholder(): string {
 
 function renderReviewSummary(review: ReviewWithCount): string {
   return `
-    <div class="bg-bg-secondary border border-bg-elevated rounded-lg overflow-hidden mb-4">
+    <div class="bg-bg-secondary border border-bg-elevated rounded-md overflow-hidden mb-4">
       <div class="flex items-center justify-between px-4 py-2.5 bg-bg-tertiary border-b border-bg-elevated">
         <span class="text-sm font-medium text-text-primary flex items-center gap-2">
           <svg class="w-4 h-4 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -805,7 +805,7 @@ export function renderFeedbackInput(state: FeedbackInputState): string {
   // Status indicator for when Claude is working or messages are queued
   const showStatusBadge = claudeState === "running" || pendingCount > 0;
   const statusBadge = showStatusBadge ? `
-    <div class="flex items-center gap-3 text-xs px-3 py-1 bg-bg-secondary/80 backdrop-blur-sm border border-bg-elevated rounded-full mb-2">
+    <div class="flex items-center gap-3 text-xs px-3 py-1 bg-bg-secondary/80 backdrop-blur-sm border border-bg-elevated rounded mb-2">
       ${claudeState === "running" ? `
         <span class="flex items-center gap-1.5 text-text-secondary">
           <span class="w-1.5 h-1.5 rounded-full bg-accent-primary animate-pulse"></span>
@@ -821,7 +821,7 @@ export function renderFeedbackInput(state: FeedbackInputState): string {
   return `
     <div id="feedback-input-container" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] flex flex-col items-center">
       ${statusBadge}
-      <div class="flex items-center w-[min(600px,calc(100vw-2rem))] bg-bg-secondary border border-bg-elevated rounded-2xl px-4 py-2 shadow-lg transition-all duration-200 focus-within:outline focus-within:outline-2 focus-within:outline-accent-primary focus-within:outline-offset-2">
+      <div class="flex items-center w-[min(600px,calc(100vw-2rem))] bg-bg-secondary border border-bg-elevated rounded-md px-4 py-2 shadow-lg transition-all duration-200 focus-within:outline focus-within:outline-2 focus-within:outline-accent-primary focus-within:outline-offset-2">
         <textarea
           id="feedback-input"
           class="flex-1 bg-transparent text-text-primary text-[15px] leading-relaxed placeholder:text-text-muted resize-none border-none outline-none focus-visible:outline-none py-1 min-h-[24px] max-h-[150px]"
@@ -832,7 +832,7 @@ export function renderFeedbackInput(state: FeedbackInputState): string {
           <kbd class="hidden sm:inline-flex text-[11px] text-text-muted font-mono px-2 py-1 bg-bg-tertiary rounded">${shortcutKey}I</kbd>
           <button
             id="feedback-submit"
-            class="w-7 h-7 flex items-center justify-center rounded-full bg-text-muted text-bg-primary transition-all duration-150 hover:bg-text-primary hover:scale-105 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+            class="w-7 h-7 flex items-center justify-center rounded bg-text-muted text-bg-primary transition-all duration-150 hover:bg-text-primary hover:scale-105 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
             title="Send (${shortcutKey}+Enter)"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -885,7 +885,7 @@ export function renderComponentsShowcase(): string {
       </div>
 
       <!-- Table of Contents -->
-      <nav class="mb-12 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+      <nav class="mb-12 p-4 bg-bg-secondary border border-bg-elevated rounded-md">
         <h2 class="text-sm font-semibold text-text-primary mb-3">Contents</h2>
         <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm">
           <a href="#colors" class="text-accent-primary hover:underline">Colors</a>
@@ -936,7 +936,7 @@ function renderColorsSection(): string {
 
   const renderSwatch = (color: { name: string; value: string; class: string }) => `
     <div class="flex flex-col">
-      <div class="${color.class} w-full h-16 rounded-lg border border-bg-elevated"></div>
+      <div class="${color.class} w-full h-16 rounded-md border border-bg-elevated"></div>
       <div class="mt-2">
         <div class="text-sm font-medium text-text-primary">${color.name}</div>
         <div class="text-xs font-mono text-text-muted">${color.value}</div>
@@ -991,12 +991,12 @@ function renderTypographySection(): string {
         <div>
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Font Families</h3>
           <div class="grid gap-4">
-            <div class="p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+            <div class="p-4 bg-bg-secondary border border-bg-elevated rounded-md">
               <div class="text-xs text-text-muted uppercase tracking-wide mb-2">Sans (Default)</div>
               <div class="text-2xl text-text-primary font-sans">The quick brown fox jumps over the lazy dog</div>
               <div class="text-xs font-mono text-text-muted mt-2">system-ui, -apple-system, "Segoe UI", Roboto...</div>
             </div>
-            <div class="p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+            <div class="p-4 bg-bg-secondary border border-bg-elevated rounded-md">
               <div class="text-xs text-text-muted uppercase tracking-wide mb-2">Mono (Code)</div>
               <div class="text-2xl text-text-primary font-mono">The quick brown fox jumps over the lazy dog</div>
               <div class="text-xs font-mono text-text-muted mt-2">"Berkeley Mono", "JetBrains Mono", "Fira Code"...</div>
@@ -1007,7 +1007,7 @@ function renderTypographySection(): string {
         <!-- Heading Scale -->
         <div>
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Heading Scale</h3>
-          <div class="space-y-4 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+          <div class="space-y-4 p-4 bg-bg-secondary border border-bg-elevated rounded-md">
             <div class="flex items-baseline gap-4">
               <span class="text-xs text-text-muted w-16 shrink-0">2xl</span>
               <span class="text-2xl font-semibold text-text-primary">Session Archive</span>
@@ -1038,7 +1038,7 @@ function renderTypographySection(): string {
         <!-- Font Weights -->
         <div>
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Font Weights</h3>
-          <div class="space-y-3 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+          <div class="space-y-3 p-4 bg-bg-secondary border border-bg-elevated rounded-md">
             <div class="flex items-baseline gap-4">
               <span class="text-xs text-text-muted w-20 shrink-0">normal</span>
               <span class="text-lg font-normal text-text-primary">The quick brown fox</span>
@@ -1061,7 +1061,7 @@ function renderTypographySection(): string {
         <!-- Text Colors -->
         <div>
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Text Colors</h3>
-          <div class="space-y-3 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+          <div class="space-y-3 p-4 bg-bg-secondary border border-bg-elevated rounded-md">
             <div class="text-text-primary">Primary text for main content</div>
             <div class="text-text-secondary">Secondary text for supporting content</div>
             <div class="text-text-muted">Muted text for less important info</div>
@@ -1083,7 +1083,7 @@ function renderPrimitivesSection(): string {
         <!-- Badges -->
         <div>
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Badges</h3>
-          <div class="flex flex-wrap gap-3 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+          <div class="flex flex-wrap gap-3 p-4 bg-bg-secondary border border-bg-elevated rounded-md">
             <span class="px-1.5 py-0.5 bg-green-500/20 text-green-400 text-xs font-medium rounded flex items-center gap-1">
               <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>
               LIVE
@@ -1100,11 +1100,11 @@ function renderPrimitivesSection(): string {
         <!-- Buttons -->
         <div>
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Buttons</h3>
-          <div class="flex flex-wrap gap-4 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
-            <button class="px-4 py-2 bg-accent-primary text-bg-primary text-sm font-medium rounded-lg hover:bg-accent-primary/90 transition-colors">
+          <div class="flex flex-wrap gap-4 p-4 bg-bg-secondary border border-bg-elevated rounded-md">
+            <button class="px-4 py-2 bg-accent-primary text-bg-primary text-sm font-medium rounded-md hover:bg-accent-primary/90 transition-colors">
               Primary Button
             </button>
-            <button class="px-4 py-2 bg-bg-tertiary text-text-primary text-sm font-medium rounded-lg border border-bg-elevated hover:bg-bg-elevated transition-colors">
+            <button class="px-4 py-2 bg-bg-tertiary text-text-primary text-sm font-medium rounded-md border border-bg-elevated hover:bg-bg-elevated transition-colors">
               Secondary Button
             </button>
             <button class="px-4 py-2 text-text-muted hover:text-text-primary text-sm transition-colors">
@@ -1119,21 +1119,21 @@ function renderPrimitivesSection(): string {
         <!-- Inputs -->
         <div>
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Inputs</h3>
-          <div class="space-y-4 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+          <div class="space-y-4 p-4 bg-bg-secondary border border-bg-elevated rounded-md">
             <div>
               <input
                 type="search"
                 placeholder="Search sessions..."
-                class="w-full max-w-sm bg-bg-secondary border border-bg-elevated rounded-lg px-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline focus:outline-2 focus:outline-accent-primary focus:outline-offset-2 transition-all"
+                class="w-full max-w-sm bg-bg-secondary border border-bg-elevated rounded-md px-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline focus:outline-2 focus:outline-accent-primary focus:outline-offset-2 transition-all"
               />
             </div>
-            <div class="flex items-center w-full max-w-md bg-bg-secondary border border-bg-elevated rounded-2xl px-4 py-2 transition-all duration-200 focus-within:outline focus-within:outline-2 focus-within:outline-accent-primary focus-within:outline-offset-2">
+            <div class="flex items-center w-full max-w-md bg-bg-secondary border border-bg-elevated rounded-md px-4 py-2 transition-all duration-200 focus-within:outline focus-within:outline-2 focus-within:outline-accent-primary focus-within:outline-offset-2">
               <textarea
                 class="flex-1 bg-transparent text-text-primary text-[15px] leading-relaxed placeholder:text-text-muted resize-none border-none outline-none focus-visible:outline-none py-1 min-h-[24px]"
                 placeholder="Ask a question..."
                 rows="1"
               ></textarea>
-              <button class="w-7 h-7 flex items-center justify-center rounded-full bg-text-muted text-bg-primary ml-3">
+              <button class="w-7 h-7 flex items-center justify-center rounded bg-text-muted text-bg-primary ml-3">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 19V5M5 12l7-7 7 7"/>
                 </svg>
@@ -1145,22 +1145,22 @@ function renderPrimitivesSection(): string {
         <!-- Border Radius -->
         <div>
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Border Radius</h3>
-          <div class="flex flex-wrap gap-6 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+          <div class="flex flex-wrap gap-6 p-4 bg-bg-secondary border border-bg-elevated rounded-md">
             <div class="text-center">
               <div class="w-16 h-16 bg-bg-elevated rounded-sm border border-bg-hover"></div>
-              <div class="text-xs text-text-muted mt-2">sm (6px)</div>
+              <div class="text-xs text-text-muted mt-2">sm (2px)</div>
             </div>
             <div class="text-center">
               <div class="w-16 h-16 bg-bg-elevated rounded-md border border-bg-hover"></div>
-              <div class="text-xs text-text-muted mt-2">md (8px)</div>
+              <div class="text-xs text-text-muted mt-2">md (4px)</div>
             </div>
             <div class="text-center">
               <div class="w-16 h-16 bg-bg-elevated rounded-lg border border-bg-hover"></div>
-              <div class="text-xs text-text-muted mt-2">lg (12px)</div>
+              <div class="text-xs text-text-muted mt-2">lg (6px)</div>
             </div>
             <div class="text-center">
-              <div class="w-16 h-16 bg-bg-elevated rounded-full border border-bg-hover"></div>
-              <div class="text-xs text-text-muted mt-2">full</div>
+              <div class="w-16 h-16 bg-bg-elevated rounded border border-bg-hover"></div>
+              <div class="text-xs text-text-muted mt-2">default (4px)</div>
             </div>
           </div>
         </div>
@@ -1168,7 +1168,7 @@ function renderPrimitivesSection(): string {
         <!-- Code -->
         <div>
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Code</h3>
-          <div class="space-y-4 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+          <div class="space-y-4 p-4 bg-bg-secondary border border-bg-elevated rounded-md">
             <div>
               <div class="text-xs text-text-muted mb-2">Inline code</div>
               <p class="text-text-primary">
@@ -1323,7 +1323,7 @@ function renderComponentsSection(): string {
         <!-- Messages -->
         <div>
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Messages</h3>
-          <div class="bg-bg-secondary border border-bg-elevated rounded-lg overflow-hidden">
+          <div class="bg-bg-secondary border border-bg-elevated rounded-md overflow-hidden">
             <div class="p-4">
               ${mockMessages.map((msg, idx) =>
                 renderMessageBlock(msg, mockMessages, idx, idx > 0 ? mockMessages[idx - 1]?.role ?? null : null)
@@ -1335,7 +1335,7 @@ function renderComponentsSection(): string {
         <!-- Status Indicators -->
         <div>
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Status Indicators</h3>
-          <div class="flex flex-wrap gap-6 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+          <div class="flex flex-wrap gap-6 p-4 bg-bg-secondary border border-bg-elevated rounded-md">
             <!-- Live indicator -->
             ${renderLiveIndicator()}
             <!-- Connected -->
@@ -1357,7 +1357,7 @@ function renderComponentsSection(): string {
         <!-- Diff Stats -->
         <div>
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Diff Stats</h3>
-          <div class="flex flex-wrap gap-4 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+          <div class="flex flex-wrap gap-4 p-4 bg-bg-secondary border border-bg-elevated rounded-md">
             <div class="flex items-center gap-2 text-xs font-mono tabular-nums">
               <span class="text-diff-del">-42</span>
               <span class="text-diff-add">+128</span>
@@ -1376,14 +1376,14 @@ function renderComponentsSection(): string {
         <!-- Toast -->
         <div>
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Toast Notifications</h3>
-          <div class="flex flex-wrap gap-4 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
-            <div class="px-4 py-2 bg-bg-tertiary border border-bg-elevated text-text-primary text-sm rounded-lg shadow-lg">
+          <div class="flex flex-wrap gap-4 p-4 bg-bg-secondary border border-bg-elevated rounded-md">
+            <div class="px-4 py-2 bg-bg-tertiary border border-bg-elevated text-text-primary text-sm rounded shadow-lg">
               Copied to clipboard
             </div>
-            <div class="px-4 py-2 bg-diff-add/20 border border-diff-add/30 text-diff-add text-sm rounded-lg shadow-lg">
+            <div class="px-4 py-2 bg-diff-add/20 border border-diff-add/30 text-diff-add text-sm rounded shadow-lg">
               Message sent to session
             </div>
-            <div class="px-4 py-2 bg-diff-del/20 border border-diff-del/30 text-diff-del text-sm rounded-lg shadow-lg">
+            <div class="px-4 py-2 bg-diff-del/20 border border-diff-del/30 text-diff-del text-sm rounded shadow-lg">
               Message was declined
             </div>
           </div>
@@ -1392,7 +1392,7 @@ function renderComponentsSection(): string {
         <!-- Session Detail Header -->
         <div id="session-header">
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Session Detail Header</h3>
-          <div class="border border-bg-elevated rounded-lg overflow-hidden">
+          <div class="border border-bg-elevated rounded-md overflow-hidden">
             ${renderHeader(
               getMockHeaderSession(),
               formatDate(getMockHeaderSession().created_at),
@@ -1414,27 +1414,27 @@ function renderIconsSection(): string {
         <!-- Provider Icons -->
         <div>
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Provider Icons</h3>
-          <div class="flex flex-wrap gap-6 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+          <div class="flex flex-wrap gap-6 p-4 bg-bg-secondary border border-bg-elevated rounded-md">
             <div class="flex flex-col items-center gap-2">
-              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-text-primary">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-md text-text-primary">
                 ${icons.anthropic}
               </div>
               <span class="text-xs text-text-muted">Anthropic</span>
             </div>
             <div class="flex flex-col items-center gap-2">
-              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-text-primary">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-md text-text-primary">
                 ${icons.openai}
               </div>
               <span class="text-xs text-text-muted">OpenAI</span>
             </div>
             <div class="flex flex-col items-center gap-2">
-              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-text-primary">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-md text-text-primary">
                 ${icons.google}
               </div>
               <span class="text-xs text-text-muted">Google</span>
             </div>
             <div class="flex flex-col items-center gap-2">
-              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-text-primary">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-md text-text-primary">
                 ${icons.github}
               </div>
               <span class="text-xs text-text-muted">GitHub</span>
@@ -1445,21 +1445,21 @@ function renderIconsSection(): string {
         <!-- UI Icons -->
         <div>
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">UI Icons</h3>
-          <div class="flex flex-wrap gap-6 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+          <div class="flex flex-wrap gap-6 p-4 bg-bg-secondary border border-bg-elevated rounded-md">
             <div class="flex flex-col items-center gap-2">
-              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-text-primary">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-md text-text-primary">
                 ${icons.copy}
               </div>
               <span class="text-xs text-text-muted">Copy</span>
             </div>
             <div class="flex flex-col items-center gap-2">
-              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-text-primary">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-md text-text-primary">
                 ${icons.terminal}
               </div>
               <span class="text-xs text-text-muted">Terminal</span>
             </div>
             <div class="flex flex-col items-center gap-2">
-              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-text-primary">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-md text-text-primary">
                 ${icons.api}
               </div>
               <span class="text-xs text-text-muted">API</span>
@@ -1470,21 +1470,21 @@ function renderIconsSection(): string {
         <!-- Message Role Icons -->
         <div>
           <h3 class="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">Message Role Icons</h3>
-          <div class="flex flex-wrap gap-6 p-4 bg-bg-secondary border border-bg-elevated rounded-lg">
+          <div class="flex flex-wrap gap-6 p-4 bg-bg-secondary border border-bg-elevated rounded-md">
             <div class="flex flex-col items-center gap-2">
-              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-role-user">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-md text-role-user">
                 ${messageIcons.user}
               </div>
               <span class="text-xs text-text-muted">User</span>
             </div>
             <div class="flex flex-col items-center gap-2">
-              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-role-assistant">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-md text-role-assistant">
                 ${messageIcons.assistant}
               </div>
               <span class="text-xs text-text-muted">Assistant</span>
             </div>
             <div class="flex flex-col items-center gap-2">
-              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-lg text-text-muted">
+              <div class="w-10 h-10 flex items-center justify-center bg-bg-tertiary rounded-md text-text-muted">
                 ${messageIcons.system}
               </div>
               <span class="text-xs text-text-muted">System</span>
