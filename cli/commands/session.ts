@@ -19,7 +19,7 @@ export async function session(args: string[]): Promise<void> {
 
 function showHelp(): void {
   console.log(`
-Usage: archive session <subcommand> [options]
+Usage: openctl session <subcommand> [options]
 
 Subcommands:
   list              List sessions on the server
@@ -43,10 +43,10 @@ Options for 'start':
   --server <url>       Server URL (default: from config)
 
 Examples:
-  archive session list              # List recent sessions
-  archive session list --mine       # List only my sessions
-  archive session delete abc123     # Delete a session
-  archive session start "fix the bug in auth.ts"  # Start interactive session
+  openctl session list              # List recent sessions
+  openctl session list --mine       # List only my sessions
+  openctl session delete abc123     # Delete a session
+  openctl session start "fix the bug in auth.ts"  # Start interactive session
   `);
 }
 
@@ -82,7 +82,7 @@ async function sessionList(args: string[]): Promise<void> {
 
   const response = await fetch(url, {
     headers: {
-      "X-Archive-Client-ID": getClientId(),
+      "X-Openctl-Client-ID": getClientId(),
     },
   });
 
@@ -131,7 +131,7 @@ async function sessionDelete(args: string[]): Promise<void> {
   const sessionId = positionals[0];
   if (!sessionId) {
     console.error("Error: Session ID is required");
-    console.log("Usage: archive session delete <session-id> [--force]");
+    console.log("Usage: openctl session delete <session-id> [--force]");
     process.exit(1);
   }
 
@@ -151,7 +151,7 @@ async function sessionDelete(args: string[]): Promise<void> {
   const response = await fetch(`${serverUrl}/api/sessions/${sessionId}`, {
     method: "DELETE",
     headers: {
-      "X-Archive-Client-ID": getClientId(),
+      "X-Openctl-Client-ID": getClientId(),
     },
   });
 
@@ -202,7 +202,7 @@ async function sessionStart(args: string[]): Promise<void> {
   const prompt = positionals.join(" ");
   if (!prompt) {
     console.error("Error: Prompt is required");
-    console.log('Usage: archive session start "<prompt>" [options]');
+    console.log('Usage: openctl session start "<prompt>" [options]');
     process.exit(1);
   }
 

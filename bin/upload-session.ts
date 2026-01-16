@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Upload a Claude Code session to the archive server.
+ * Upload a Claude Code session to the server.
  *
  * Usage:
  *   bun bin/upload-session.ts [options]
@@ -599,7 +599,7 @@ async function main() {
 
   if (options.help) {
     console.log(`
-Upload a Claude Code session to the archive server.
+Upload a Claude Code session to the server.
 
 Usage:
   bun bin/upload-session.ts [options]

@@ -1,6 +1,6 @@
-# Claude Session Archive
+# openctl
 
-A read-only web application for storing and viewing Claude Code sessions.
+A web application for storing and viewing Claude Code sessions.
 
 ## Contributing Learnings
 

@@ -1,4 +1,4 @@
-# Claude Session Archive
+# openctl
 
 A platform for storing, viewing, and sharing Claude Code sessions. Includes a web viewer with live streaming support and a CLI for uploading sessions.
 
@@ -26,14 +26,14 @@ The web UI is available at `http://localhost:3000`.
 
 ## CLI
 
-The `archive` CLI provides commands for managing sessions and configuring the archive.
+The `openctl` CLI provides commands for managing sessions and configuring the server.
 
 ```
-archive <command> [options]
+openctl <command> [options]
 
 Commands:
   daemon    Manage the background daemon (start/stop/status)
-  upload    Upload a session to the archive
+  upload    Upload a session to the server
   config    Manage CLI configuration
   repo      Manage repository access control
   session   Manage sessions (list/delete/start)
@@ -44,31 +44,31 @@ Commands:
 
 ```bash
 # Upload the current session (auto-detects from working directory)
-archive upload
+openctl upload
 
 # Upload a specific session by UUID
-archive upload --session c28995d0-7cba-4974-8268-32b94ac183a4
+openctl upload --session c28995d0-7cba-4974-8268-32b94ac183a4
 
 # Upload with a custom title
-archive upload --title "Fixed authentication bug"
+openctl upload --title "Fixed authentication bug"
 
 # Generate a code review alongside the upload
-archive upload --review
+openctl upload --review
 ```
 
 ### Background Daemon
 
-The daemon watches for active Claude Code sessions and streams them to the archive server in real-time.
+The daemon watches for active Claude Code sessions and streams them to the server in real-time.
 
 ```bash
 # Start the daemon
-archive daemon start
+openctl daemon start
 
 # Check status
-archive daemon status
+openctl daemon status
 
 # Stop the daemon
-archive daemon stop
+openctl daemon stop
 ```
 
 ### Repository Access Control
@@ -77,23 +77,23 @@ Control which repositories are allowed for automatic uploads.
 
 ```bash
 # Allow the current repository
-archive repo allow
+openctl repo allow
 
 # List allowed repositories
-archive repo list
+openctl repo list
 
 # Remove a repository from the allowlist
-archive repo deny
+openctl repo deny
 ```
 
 ### Configuration
 
 ```bash
 # Set the server URL
-archive config set server https://archive.example.com
+openctl config set server https://openctl.example.com
 
 # View all configuration
-archive config list
+openctl config list
 ```
 
 ## API

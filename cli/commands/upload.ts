@@ -1,5 +1,5 @@
 /**
- * Upload a Claude Code session to the archive server.
+ * Upload a Claude Code session to the server.
  */
 
 import { $ } from "bun";
@@ -592,7 +592,7 @@ async function uploadSession(options: UploadOptions): Promise<void> {
     body: formData,
     redirect: "manual",
     headers: {
-      "X-Archive-Client-ID": getClientId(),
+      "X-Openctl-Client-ID": getClientId(),
     },
   });
 
@@ -613,10 +613,10 @@ async function uploadSession(options: UploadOptions): Promise<void> {
 
 function showHelp(): void {
   console.log(`
-Upload a Claude Code session to the archive server.
+Upload a Claude Code session to the server.
 
 Usage:
-  archive upload [options]
+  openctl upload [options]
 
 Options:
   --session, -s   Session UUID or path to JSONL file (default: auto-detect current session)

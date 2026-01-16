@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 
 /**
- * Archive CLI - Main entry point
+ * openctl CLI - Main entry point
  *
  * Commands:
  *   daemon    Manage the background daemon (start/stop/status)
- *   upload    Upload a session to the archive
+ *   upload    Upload a session to the server
  *   config    Manage CLI configuration
  *   repo      Manage repository access control
  *   session   Manage sessions (list/delete)
@@ -32,34 +32,34 @@ async function main() {
 
   if (!command || command === "--help" || command === "-h") {
     console.log(`
-Claude Session Archive CLI
+openctl - Claude Code Session Manager
 
 Upload, stream, and manage Claude Code sessions.
 
-Usage: archive <command> [options]
+Usage: openctl <command> [options]
 
 Commands:
   daemon    Manage the background daemon (start/stop/status)
-  upload    Upload a session to the archive
+  upload    Upload a session to the server
   config    Manage CLI configuration
   repo      Manage repository access control
   session   Manage sessions (list/delete)
   list      Alias for 'session list'
 
-Run 'archive <command> --help' for more information.
+Run 'openctl <command> --help' for more information.
     `);
     process.exit(0);
   }
 
   if (command === "--version" || command === "-v") {
-    console.log("archive 0.1.0");
+    console.log("openctl 0.1.0");
     process.exit(0);
   }
 
   const handler = commands[command];
   if (!handler) {
     console.error(`Unknown command: ${command}`);
-    console.log("Run 'archive --help' for available commands.");
+    console.log("Run 'openctl --help' for available commands.");
     process.exit(1);
   }
 

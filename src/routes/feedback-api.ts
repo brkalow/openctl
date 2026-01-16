@@ -1,5 +1,5 @@
 /**
- * API endpoints for the Archive plugin to retrieve pending feedback.
+ * API endpoints for the openctl plugin to retrieve pending feedback.
  *
  * Unlike the WebSocket-based PTY wrapper approach, the plugin polls this
  * endpoint when Claude's Stop hook fires.
@@ -102,7 +102,7 @@ export function handleMarkFeedbackDelivered(
  * GET /api/sessions/by-claude-session/:claudeSessionId/feedback/pending
  *
  * Returns pending feedback messages for a session, looking up by Claude session ID.
- * This allows the plugin to find the Archive session without needing the Archive
+ * This allows the plugin to find the openctl session without needing the openctl
  * session ID to be set as an environment variable.
  */
 export function handleGetPendingFeedbackByClaudeSession(
@@ -141,7 +141,7 @@ export function handleGetPendingFeedbackByClaudeSession(
       created_at: m.created_at,
       context: m.context,
     })),
-    session_id: session.id, // Return Archive session ID for marking delivered
+    session_id: session.id, // Return openctl session ID for marking delivered
   };
 
   return new Response(JSON.stringify(response), {

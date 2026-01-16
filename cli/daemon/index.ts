@@ -24,9 +24,9 @@ export interface DaemonOptions {
   verbose: boolean;
 }
 
-const ARCHIVE_DIR = join(Bun.env.HOME || "~", ".archive");
-const PID_FILE = join(ARCHIVE_DIR, "daemon.pid");
-const STATUS_FILE = join(ARCHIVE_DIR, "daemon.status.json");
+const OPENCTL_DIR = join(Bun.env.HOME || "~", ".openctl");
+const PID_FILE = join(OPENCTL_DIR, "daemon.pid");
+const STATUS_FILE = join(OPENCTL_DIR, "daemon.status.json");
 
 let tracker: SessionTracker | null = null;
 let watcher: SessionWatcher | null = null;
@@ -39,14 +39,14 @@ export async function startDaemon(options: DaemonOptions): Promise<void> {
   // Check if already running
   if (await isDaemonRunning()) {
     console.error(
-      "Daemon is already running. Use 'archive daemon stop' to stop it."
+      "Daemon is already running. Use 'openctl daemon stop' to stop it."
     );
     process.exit(1);
   }
 
   // Ensure config directory exists
-  if (!existsSync(ARCHIVE_DIR)) {
-    mkdirSync(ARCHIVE_DIR, { recursive: true });
+  if (!existsSync(OPENCTL_DIR)) {
+    mkdirSync(OPENCTL_DIR, { recursive: true });
   }
 
   // Write PID file
@@ -72,10 +72,10 @@ No repositories allowed for automatic upload.
 
 The daemon only uploads sessions from explicitly allowed repositories.
 To allow the current repository:
-  archive repo allow
+  openctl repo allow
 
 To allow a specific repository:
-  archive repo allow /path/to/repo
+  openctl repo allow /path/to/repo
 `);
   }
 

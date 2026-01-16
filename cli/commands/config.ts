@@ -12,7 +12,7 @@ export async function config(args: string[]): Promise<void> {
       return configList();
     default:
       console.log(`
-Usage: archive config <subcommand> [args]
+Usage: openctl config <subcommand> [args]
 
 Subcommands:
   get <key>          Get a config value
@@ -20,7 +20,7 @@ Subcommands:
   list               List all config values
 
 Available keys:
-  server      Archive server URL
+  server      Server URL
   db          Database path
   autoOpen    Auto-open browser after upload (true/false)
       `);
@@ -30,7 +30,7 @@ Available keys:
 function configGet(key: string | undefined): void {
   if (!key) {
     console.error("Error: Key is required");
-    console.log("Usage: archive config get <key>");
+    console.log("Usage: openctl config get <key>");
     return;
   }
 
@@ -45,7 +45,7 @@ function configGet(key: string | undefined): void {
 function configSet(key: string | undefined, value: string | undefined): void {
   if (!key || value === undefined) {
     console.error("Error: Key and value are required");
-    console.log("Usage: archive config set <key> <value>");
+    console.log("Usage: openctl config set <key> <value>");
     return;
   }
 

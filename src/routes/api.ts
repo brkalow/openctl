@@ -31,7 +31,7 @@ function jsonError(error: string, status: number): Response {
 
 // Extract client ID from request header
 function getClientId(req: Request): string | null {
-  return req.headers.get("X-Archive-Client-ID");
+  return req.headers.get("X-Openctl-Client-ID");
 }
 
 // URL validation

@@ -6,7 +6,7 @@ set -e
 
 SERVER_URL="http://localhost:3456"
 CLI="bun run cli/index.ts"
-CLIENT_ID_PATH="$HOME/.archive/client-id"
+CLIENT_ID_PATH="$HOME/.openctl/client-id"
 
 echo "=== Client ID and Session Ownership Tests ==="
 echo ""
@@ -25,7 +25,7 @@ echo "2. Creating a test session"
 SESSION_DATA='[{"type":"user","content":"Hello"},{"type":"assistant","content":"Hi there!"}]'
 RESPONSE=$(curl -s -X POST "$SERVER_URL/api/sessions" \
   -H "Content-Type: multipart/form-data" \
-  -H "X-Archive-Client-ID: $(cat $CLIENT_ID_PATH 2>/dev/null || echo 'test-client-123')" \
+  -H "X-Openctl-Client-ID: $(cat $CLIENT_ID_PATH 2>/dev/null || echo 'test-client-123')" \
   -F "title=Test Session for Ownership" \
   -F "description=Testing client ID ownership" \
   -F "session_data=$SESSION_DATA")
@@ -64,7 +64,7 @@ echo "7. Testing ownership protection"
 # Create session with one client ID
 RESPONSE=$(curl -s -X POST "$SERVER_URL/api/sessions" \
   -H "Content-Type: multipart/form-data" \
-  -H "X-Archive-Client-ID: other-client-456" \
+  -H "X-Openctl-Client-ID: other-client-456" \
   -F "title=Other Client Session" \
   -F "description=Created by a different client" \
   -F "session_data=$SESSION_DATA")
@@ -80,7 +80,7 @@ echo ""
 # Cleanup: delete the other session with the correct client ID
 echo "8. Cleanup: Deleting test session with correct client ID"
 curl -s -X DELETE "$SERVER_URL/api/sessions/$OTHER_SESSION_ID" \
-  -H "X-Archive-Client-ID: other-client-456" || true
+  -H "X-Openctl-Client-ID: other-client-456" || true
 echo "  Cleaned up"
 echo ""
 

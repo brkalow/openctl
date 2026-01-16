@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 
-const CONFIG_PATH = join(Bun.env.HOME || "~", ".archive", "config.json");
+const CONFIG_PATH = join(Bun.env.HOME || "~", ".openctl", "config.json");
 
 interface ServerConfig {
   allowedRepos: string[];

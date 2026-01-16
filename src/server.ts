@@ -215,7 +215,7 @@ const server = Bun.serve({
   },
 });
 
-console.log(`Claude Session Archive running at http://${HOST}:${server.port}`);
+console.log(`openctl running at http://${HOST}:${server.port}`);
 
 // Graceful shutdown handling
 let isShuttingDown = false;
