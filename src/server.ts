@@ -36,6 +36,7 @@ const server = Bun.serve({
     "/": homepage,
     "/sessions/:id": homepage,
     "/s/:shareToken": homepage,
+    "/_components": homepage,
 
     // API routes for data
     "/api/sessions": {

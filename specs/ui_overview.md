@@ -11,7 +11,10 @@ This document describes the overall UI architecture and design system for the Se
 
 ## Visual Inspiration
 
-- Near-black backgrounds with high contrast text
+Reference sites: [interfacecraft.dev](https://www.interfacecraft.dev/), [daytona.io](https://www.daytona.io/), [modal.com](https://modal.com/), [diffs.com](https://diffs.com/)
+
+- Near-black backgrounds with softer contrast text
+- Pastel-forward accent colors (soft cyan, lavender, mint, rose)
 - Large, confident typography for headlines
 - Code/diff display as the central visual element
 - Generous whitespace and clean visual hierarchy
@@ -44,36 +47,22 @@ This document describes the overall UI architecture and design system for the Se
 
 ## Color System
 
-### Background Colors (darkest to lightest)
-| Token | Hex | Usage |
-|-------|-----|-------|
-| `bg-primary` | `#0a0a0a` | Page background (near-black) |
-| `bg-secondary` | `#141414` | Cards, panels |
-| `bg-tertiary` | `#1a1a1a` | Panel headers, alternate rows |
-| `bg-elevated` | `#222222` | Borders, subtle depth |
-| `bg-hover` | `#2a2a2a` | Hover states |
+> **Source of truth**: `src/styles/main.css` — all color values are defined in the `@theme` block.
 
-### Text Colors
-| Token | Hex | Usage |
-|-------|-----|-------|
-| `text-primary` | `#e8e8e8` | Primary content |
-| `text-secondary` | `#a0a0a0` | Secondary content, descriptions |
-| `text-muted` | `#666666` | Hints, timestamps, labels |
+### Token Categories
 
-### Accent Colors
-| Token | Hex | Usage |
-|-------|-----|-------|
-| `accent-primary` | `#6eb5ff` | Links, interactive elements, user role |
-| `accent-secondary` | `#a78bfa` | Reserved for future use |
+**Background** (darkest to lightest): `bg-primary`, `bg-secondary`, `bg-tertiary`, `bg-elevated`, `bg-hover`
 
-### Semantic Colors
-| Token | Hex | Usage |
-|-------|-----|-------|
-| `diff-add` | `#2dd4bf` | Additions, success states, assistant role |
-| `diff-del` | `#f87171` | Deletions, error states |
-| `diff-hunk` | `#6eb5ff` | Diff hunk headers |
-| `role-user` | `#6eb5ff` | User message indicator |
-| `role-assistant` | `#2dd4bf` | Assistant message indicator |
+**Text**: `text-primary` (main content), `text-secondary` (supporting), `text-muted` (hints/labels)
+
+**Accent**: `accent-primary` (soft cyan - links, focus states), `accent-secondary` (soft lavender)
+
+**Semantic**:
+- `diff-add` / `role-assistant` — soft mint green for additions, success, assistant
+- `diff-del` — soft rose for deletions, errors
+- `diff-hunk` / `role-user` — soft sky blue for hunk headers, user messages
+
+**Status**: `status-live` (green pulse), `status-warning` (amber)
 
 ## Component Patterns
 
@@ -111,9 +100,10 @@ This document describes the overall UI architecture and design system for the Se
 
 ### Input Fields
 - Background: `bg-secondary`
-- Border: `border-bg-elevated` → `border-accent-primary` on focus
-- Border radius: `rounded-lg`
+- Border: `border-bg-elevated`
+- Border radius: `rounded-lg` (standard) or `rounded-2xl` (composite inputs)
 - Placeholder: `text-muted`
+- Focus: Outline ring (`outline-2 outline-accent-primary outline-offset-2`), not border change
 
 ### Panels
 - Wrapper: `bg-secondary`, `border-bg-elevated`, `rounded-lg`
@@ -130,16 +120,18 @@ This document describes the overall UI architecture and design system for the Se
 
 ## Typography
 
+> **Base styles**: See `src/styles/main.css` for font families, letter-spacing, and line-height values.
+
 ### Headlines
 - Size: `text-2xl` to `text-4xl` depending on context
 - Weight: `font-semibold` to `font-bold`
-- Letter-spacing: Tight (`tracking-tight` or `-0.02em`)
+- Letter-spacing: Tight (tighter than body text)
 - Color: `text-primary`
 
 ### Body Text
 - Size: `text-sm` (14px) default, `text-base` (16px) for emphasis
 - Weight: `font-normal`
-- Line height: `leading-relaxed` for readable blocks
+- Line height: Relaxed for readable blocks
 - Color: `text-primary` for main content, `text-secondary` for supporting text
 
 ### Small/Meta
@@ -149,7 +141,7 @@ This document describes the overall UI architecture and design system for the Se
 
 ### Monospace
 - Font: `font-mono` for code, paths, commands, filenames
-- Slightly smaller than surrounding text when inline
+- Slightly smaller than surrounding text when inline (0.9em)
 
 ## Spacing
 
@@ -200,5 +192,6 @@ This document describes the overall UI architecture and design system for the Se
 
 - **Rendering**: Template strings in `views.ts`, no framework
 - **Routing**: Custom client-side router via History API
-- **Styling**: Tailwind CSS v4 with custom theme variables
+- **Styling**: Tailwind CSS v4 with custom theme variables in `src/styles/main.css`
 - **Diff rendering**: `@pierre/diffs` web component
+- **Component showcase**: `/_components` route displays all design tokens and primitives
