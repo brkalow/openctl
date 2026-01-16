@@ -102,6 +102,50 @@ download() {
     fi
 }
 
+# Compute SHA256 checksum of a file
+compute_sha256() {
+    local file="$1"
+    if command -v sha256sum &> /dev/null; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum &> /dev/null; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    else
+        # No checksum tool available, skip verification
+        echo ""
+    fi
+}
+
+# Verify checksum of downloaded file
+verify_checksum() {
+    local file="$1"
+    local checksums_file="$2"
+    local filename
+    filename=$(basename "$file")
+
+    local expected actual
+    expected=$(grep "$filename" "$checksums_file" 2>/dev/null | awk '{print $1}')
+
+    if [ -z "$expected" ]; then
+        warn "Checksum not found for ${filename}, skipping verification"
+        return 0
+    fi
+
+    actual=$(compute_sha256 "$file")
+
+    if [ -z "$actual" ]; then
+        warn "No checksum tool available (sha256sum or shasum), skipping verification"
+        return 0
+    fi
+
+    if [ "$expected" != "$actual" ]; then
+        error "Checksum verification failed for ${filename}
+  Expected: ${expected}
+  Got:      ${actual}"
+    fi
+
+    info "Checksum verified"
+}
+
 # Install binary to INSTALL_DIR
 install_binary() {
     local source_path="$1"
@@ -161,7 +205,7 @@ install_local() {
 
 # Install from GitHub releases
 install_remote() {
-    local os arch version archive_name download_url tmp_dir
+    local os arch version archive_name download_url checksums_url tmp_dir
 
     os=$(detect_os)
     arch=$(detect_arch)
@@ -180,13 +224,23 @@ install_remote() {
     info "Latest version: ${version}"
 
     download_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${version}/${archive_name}"
-
-    info "Downloading ${archive_name}..."
+    checksums_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${version}/checksums.txt"
 
     tmp_dir=$(mktemp -d)
     trap 'rm -rf "$tmp_dir"' EXIT
 
+    # Download checksums file (optional, may not exist for older releases)
+    info "Downloading checksums..."
+    if ! download "$checksums_url" "${tmp_dir}/checksums.txt" 2>/dev/null; then
+        warn "Checksums file not available, skipping verification"
+        touch "${tmp_dir}/checksums.txt"
+    fi
+
+    info "Downloading ${archive_name}..."
     download "$download_url" "${tmp_dir}/${archive_name}"
+
+    # Verify checksum
+    verify_checksum "${tmp_dir}/${archive_name}" "${tmp_dir}/checksums.txt"
 
     info "Extracting..."
 

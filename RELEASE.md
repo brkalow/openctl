@@ -66,6 +66,7 @@ git push origin v0.2.0
    - Build binaries for all platforms (macOS, Linux, Windows)
    - Run smoke tests
    - Create compressed archives
+   - Generate SHA256 checksums (`checksums.txt`)
    - Publish a GitHub release with auto-generated release notes
 
 ### 5. Verify the GitHub Release
@@ -73,13 +74,14 @@ git push origin v0.2.0
 After the workflow completes:
 
 1. Check the [Releases page](https://github.com/brkalow/openctl/releases)
-2. Verify all platform binaries are attached:
+2. Verify all assets are attached:
    - `openctl-darwin-arm64.tar.gz`
    - `openctl-darwin-x64.tar.gz`
    - `openctl-linux-x64.tar.gz`
    - `openctl-linux-arm64.tar.gz`
    - `openctl-windows-x64.zip`
-3. Test the install script with the new release:
+   - `checksums.txt`
+3. Test the install script with the new release (verifies checksums automatically):
    ```bash
    curl -fsSL https://openctl.dev/setup/install.sh | bash
    openctl --version

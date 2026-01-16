@@ -28,6 +28,12 @@ jobs:
       - name: Build CLI binaries
         run: bun run scripts/build-cli.ts --test --archive
 
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz *.zip > checksums.txt
+          cat checksums.txt
+
       - name: Get version from tag
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
@@ -45,5 +51,6 @@ jobs:
             dist/openctl-linux-x64.tar.gz
             dist/openctl-linux-arm64.tar.gz
             dist/openctl-windows-x64.zip
+            dist/checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
