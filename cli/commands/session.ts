@@ -24,7 +24,6 @@ Usage: openctl session <subcommand> [options]
 Subcommands:
   list              List sessions on the server
   delete <id>       Delete a session
-  start "<prompt>"  Start an interactive session with Claude
 
 Options for 'list':
   --mine            Only show sessions uploaded by this client
@@ -37,16 +36,10 @@ Options for 'delete':
   --force           Skip confirmation prompt
   --server <url>    Server URL (default: from config)
 
-Options for 'start':
-  --title <text>       Session title
-  --approval <mode>    Approval mode: ask (default), auto, reject
-  --server <url>       Server URL (default: from config)
-
 Examples:
   openctl session list              # List recent sessions
   openctl session list --mine       # List only my sessions
   openctl session delete abc123     # Delete a session
-  openctl session start "fix the bug in auth.ts"  # Start interactive session
   `);
 }
 
@@ -188,32 +181,8 @@ async function readLine(): Promise<string> {
   return decoder.decode(value).trim();
 }
 
-async function sessionStart(args: string[]): Promise<void> {
-  const { values, positionals } = parseArgs({
-    args,
-    options: {
-      server: { type: "string" },
-      title: { type: "string" },
-      approval: { type: "string" },
-    },
-    allowPositionals: true,
-  });
-
-  const prompt = positionals.join(" ");
-  if (!prompt) {
-    console.error("Error: Prompt is required");
-    console.log('Usage: openctl session start "<prompt>" [options]');
-    process.exit(1);
-  }
-
-  // Delegate to start command
-  const { start } = await import("./start");
-  await start([
-    ...(values.server ? ["--server", values.server] : []),
-    ...(values.title ? ["--title", values.title] : []),
-    ...(values.approval ? ["--approval", values.approval] : []),
-    "--",
-    "claude",
-    prompt,
-  ]);
+async function sessionStart(_args: string[]): Promise<void> {
+  console.error("Error: 'session start' is not yet implemented.");
+  console.error("Use Claude Code directly and upload sessions with 'openctl upload'.");
+  process.exit(1);
 }

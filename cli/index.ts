@@ -52,7 +52,12 @@ Run 'openctl <command> --help' for more information.
   }
 
   if (command === "--version" || command === "-v") {
-    console.log("openctl 0.1.0");
+    // Use build-time version if available, otherwise read from package.json
+    const version =
+      process.env.OPENCTL_VERSION ||
+      (await import("../package.json")).version ||
+      "0.0.0";
+    console.log(`openctl ${version}`);
     process.exit(0);
   }
 
