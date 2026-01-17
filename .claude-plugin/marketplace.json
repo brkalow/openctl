@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "openctl",
-      "source": "./openctl",
+      "source": "./plugins/claude-code/openctl",
       "description": "Enables remote feedback during Claude Code sessions",
       "version": "0.1.0"
     }
