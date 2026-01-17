@@ -8,6 +8,9 @@ import type { BrowserToServerMessage } from "./routes/websocket-types";
 // Import HTML template - Bun will bundle CSS and JS referenced in this file
 import homepage from "../public/index.html";
 
+// Import install script as text
+import installScript from "../install.sh" with { type: "text" };
+
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 const HOST = process.env.HOST || "0.0.0.0";
 
@@ -37,6 +40,11 @@ const server = Bun.serve({
     "/sessions/:id": homepage,
     "/s/:shareToken": homepage,
     "/_components": homepage,
+
+    // Install script for CLI setup
+    "/setup/install.sh": () => new Response(installScript, {
+      headers: { "Content-Type": "text/x-shellscript" },
+    }),
 
     // API routes for data
     "/api/sessions": {
