@@ -61,18 +61,22 @@ export function SessionDetailPage(props: SessionDetailPageProps) {
   }, []);
 
   const handleDiffUpdate = useCallback(async () => {
-    const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/diffs`);
-    if (res.ok) {
-      const data = await res.json();
-      setCurrentDiffs(data.diffs || []);
-    }
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/diffs`);
+      if (res.ok) {
+        const data = await res.json();
+        setCurrentDiffs(data.diffs || []);
+      }
 
-    // Also fetch annotations
-    const annotationsRes = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/annotations`);
-    if (annotationsRes.ok) {
-      const annotationsData = await annotationsRes.json();
-      setCurrentAnnotationsByDiff(annotationsData?.annotations_by_diff || {});
-      setCurrentReview(annotationsData?.review || null);
+      // Also fetch annotations
+      const annotationsRes = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/annotations`);
+      if (annotationsRes.ok) {
+        const annotationsData = await annotationsRes.json();
+        setCurrentAnnotationsByDiff(annotationsData?.annotations_by_diff || {});
+        setCurrentReview(annotationsData?.review || null);
+      }
+    } catch (error) {
+      console.error("Failed to update diffs:", error);
     }
   }, [session.id]);
 

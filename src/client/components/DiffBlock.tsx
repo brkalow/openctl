@@ -3,12 +3,6 @@ import { escapeHtml } from '../blocks';
 import type { FileDiff as FileDiffType, DiffLineAnnotation } from '@pierre/diffs';
 import type { Annotation, AnnotationType } from '../../db/schema';
 
-declare global {
-  interface Window {
-    copyToClipboard: (text: string) => Promise<void>;
-  }
-}
-
 // Annotation metadata for rendering
 interface AnnotationMetadata {
   id: number;
@@ -44,29 +38,42 @@ export function DiffBlock(props: DiffBlockProps) {
   const diffInstanceRef = useRef<FileDiffType<AnnotationMetadata> | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Lazy render diff when expanded
-  useEffect(() => {
-    if (expanded && !diffInstanceRef.current && containerRef.current) {
-      renderDiff();
-    }
-  }, [expanded]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      diffInstanceRef.current?.cleanUp();
-      diffInstanceRef.current = null;
-    };
-  }, []);
-
   const toggle = useCallback(() => {
     setExpanded((prev) => !prev);
   }, []);
 
-  async function renderDiff(): Promise<void> {
+  const renderFallback = useCallback((diffContent: string): void => {
     if (!containerRef.current) return;
 
-    const { diffContent, filename, annotations, reviewModel } = props;
+    containerRef.current.innerHTML = `
+      <div class="p-4">
+        <div class="flex items-center gap-2 text-text-muted mb-2">
+          <span>Unable to render diff</span>
+        </div>
+        <button class="text-accent-primary text-sm hover:underline show-raw-btn">
+          Show raw diff
+        </button>
+        <pre class="hidden raw-diff mt-2 text-xs font-mono whitespace-pre-wrap bg-bg-primary p-2 rounded overflow-x-auto max-h-96 overflow-y-auto">${escapeHtml(diffContent)}</pre>
+      </div>
+    `;
+
+    // Attach toggle handler
+    const showBtn = containerRef.current.querySelector('.show-raw-btn');
+    showBtn?.addEventListener('click', () => {
+      const raw = containerRef.current?.querySelector('.raw-diff');
+      if (raw) {
+        raw.classList.toggle('hidden');
+        if (showBtn instanceof HTMLElement) {
+          showBtn.textContent = raw.classList.contains('hidden') ? 'Show raw diff' : 'Hide raw diff';
+        }
+      }
+    });
+  }, []);
+
+  const renderDiff = useCallback(async (): Promise<void> => {
+    if (!containerRef.current) return;
+
+    const { diffContent, filename: propFilename, annotations, reviewModel } = props;
 
     try {
       // Lazy load @pierre/diffs to reduce initial bundle size
@@ -83,7 +90,7 @@ export function DiffBlock(props: DiffBlockProps) {
           type: a.annotation_type,
           content: a.content,
           model: reviewModel,
-          filename,
+          filename: propFilename,
           lineNumber: a.line_number,
         },
       }));
@@ -109,38 +116,24 @@ export function DiffBlock(props: DiffBlockProps) {
       });
     } catch (err) {
       console.error('Failed to render diff:', err);
-      renderFallback();
+      renderFallback(diffContent);
     }
-  }
+  }, [props, renderFallback]);
 
-  function renderFallback(): void {
-    if (!containerRef.current) return;
+  // Lazy render diff when expanded
+  useEffect(() => {
+    if (expanded && !diffInstanceRef.current && containerRef.current) {
+      renderDiff();
+    }
+  }, [expanded, renderDiff]);
 
-    const { diffContent } = props;
-    containerRef.current.innerHTML = `
-      <div class="p-4">
-        <div class="flex items-center gap-2 text-text-muted mb-2">
-          <span>Unable to render diff</span>
-        </div>
-        <button class="text-accent-primary text-sm hover:underline show-raw-btn">
-          Show raw diff
-        </button>
-        <pre class="hidden raw-diff mt-2 text-xs font-mono whitespace-pre-wrap bg-bg-primary p-2 rounded overflow-x-auto max-h-96 overflow-y-auto">${escapeHtml(diffContent)}</pre>
-      </div>
-    `;
-
-    // Attach toggle handler
-    const showBtn = containerRef.current.querySelector('.show-raw-btn');
-    showBtn?.addEventListener('click', () => {
-      const raw = containerRef.current?.querySelector('.raw-diff');
-      if (raw) {
-        raw.classList.toggle('hidden');
-        if (showBtn instanceof HTMLElement) {
-          showBtn.textContent = raw.classList.contains('hidden') ? 'Show raw diff' : 'Hide raw diff';
-        }
-      }
-    });
-  }
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      diffInstanceRef.current?.cleanUp();
+      diffInstanceRef.current = null;
+    };
+  }, []);
 
   function createAnnotationElement(metadata: AnnotationMetadata): HTMLElement {
     const config = annotationConfig[metadata.type] || annotationConfig.suggestion;

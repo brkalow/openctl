@@ -43,6 +43,7 @@ export function MessageList(props: MessageListProps) {
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [showNewMessagesButton, setShowNewMessagesButton] = useState(false);
+  const prevMessageCountRef = useRef(initialMessages.length);
 
   // Use the live session hook
   const {
@@ -80,9 +81,17 @@ export function MessageList(props: MessageListProps) {
 
   // Auto-scroll effect when messages change
   useEffect(() => {
-    if (scrollContainerRef.current && isNearBottom(scrollContainerRef.current)) {
-      scrollToBottom(scrollContainerRef.current);
-      setShowNewMessagesButton(false);
+    const hasNewMessages = messages.length > prevMessageCountRef.current;
+    prevMessageCountRef.current = messages.length;
+
+    if (scrollContainerRef.current) {
+      if (isNearBottom(scrollContainerRef.current)) {
+        scrollToBottom(scrollContainerRef.current);
+        setShowNewMessagesButton(false);
+      } else if (hasNewMessages) {
+        // User is scrolled up and new messages arrived - show the button
+        setShowNewMessagesButton(true);
+      }
     }
   }, [messages.length]);
 
@@ -106,18 +115,23 @@ export function MessageList(props: MessageListProps) {
     <div className="message-list-container relative h-full">
       <div
         ref={scrollContainerRef}
-        className="conversation-list overflow-y-auto h-full space-y-4 p-4"
+        className="conversation-panel flex-1 overflow-y-auto flex flex-col h-full"
         onScroll={handleScroll}
       >
-        {messages.map((message, i) => (
-          <MessageBlock
-            key={message.id || i}
-            message={message}
-            toolResults={toolResults}
-            showRoleBadge={i === 0 || message.role !== messages[i - 1]?.role}
-            messageIndex={i}
-          />
-        ))}
+        {messages.map((message, i) => {
+          const prevRole = i > 0 ? messages[i - 1]?.role : null;
+          const roleChanged = prevRole !== null && prevRole !== message.role;
+          return (
+            <div key={message.id || i} className={roleChanged ? 'mt-2' : ''}>
+              <MessageBlock
+                message={message}
+                toolResults={toolResults}
+                showRoleBadge={i === 0 || message.role !== messages[i - 1]?.role}
+                messageIndex={i}
+              />
+            </div>
+          );
+        })}
 
         {/* Typing indicator */}
         {showTypingIndicator && <TypingIndicator />}
@@ -138,13 +152,13 @@ export function MessageList(props: MessageListProps) {
 
 function TypingIndicator() {
   return (
-    <div className="flex items-center gap-2 text-text-muted text-sm">
+    <div className="flex items-center gap-2 py-3 px-4 text-text-muted border-l-2 border-role-assistant">
       <div className="flex gap-1">
-        <span className="w-2 h-2 bg-text-muted rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-        <span className="w-2 h-2 bg-text-muted rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-        <span className="w-2 h-2 bg-text-muted rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+        <span className="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+        <span className="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+        <span className="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
       </div>
-      <span>Claude is working...</span>
+      <span className="text-sm">Claude is working...</span>
     </div>
   );
 }
