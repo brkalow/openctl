@@ -238,6 +238,7 @@ export function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<SessionListLoader />} />
+        <Route path="/sessions" element={<SessionListLoader />} />
         <Route path="/sessions/:id" element={<SessionDetailLoader />} />
         <Route path="/s/:shareToken" element={<SharedSessionLoader />} />
         <Route path="/_components" element={<ComponentsShowcasePage />} />
