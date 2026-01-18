@@ -1,6 +1,8 @@
 /**
  * API client for communicating with the server's live streaming endpoints.
  * Includes retry logic with exponential backoff for resilience.
+ *
+ * Authentication is via X-Openctl-Client-ID header (sent automatically).
  */
 
 import { getClientId } from "../lib/client-id";
@@ -68,7 +70,6 @@ export interface CompleteSessionRequest {
 // Response interfaces
 export interface CreateLiveSessionResponse {
   id: string;
-  stream_token: string;
   status: string;
   resumed: boolean;
   restored?: boolean;  // true if a completed session was restored to live
@@ -120,6 +121,7 @@ export class ApiClient {
 
   /**
    * Get common headers for all requests.
+   * Client ID is used for authentication.
    */
   private getHeaders(additionalHeaders: Record<string, string> = {}): Record<string, string> {
     return {
@@ -151,7 +153,7 @@ export class ApiClient {
       throw new Error(`Failed to create live session: ${res.status} - ${error}`);
     }
 
-    return res.json();
+    return res.json() as Promise<CreateLiveSessionResponse>;
   }
 
   /**
@@ -159,7 +161,6 @@ export class ApiClient {
    */
   async pushMessages(
     sessionId: string,
-    streamToken: string,
     messages: unknown[]
   ): Promise<PushMessagesResponse> {
     const res = await fetchWithRetry(
@@ -168,7 +169,6 @@ export class ApiClient {
         method: "POST",
         headers: this.getHeaders({
           "Content-Type": "application/json",
-          Authorization: `Bearer ${streamToken}`,
         }),
         body: JSON.stringify({ messages }),
       },
@@ -180,7 +180,7 @@ export class ApiClient {
       throw new Error(`Failed to push messages: ${res.status} - ${error}`);
     }
 
-    return res.json();
+    return res.json() as Promise<PushMessagesResponse>;
   }
 
   /**
@@ -188,7 +188,6 @@ export class ApiClient {
    */
   async pushToolResults(
     sessionId: string,
-    streamToken: string,
     results: unknown[]
   ): Promise<PushToolResultsResponse> {
     const res = await fetchWithRetry(
@@ -197,7 +196,6 @@ export class ApiClient {
         method: "POST",
         headers: this.getHeaders({
           "Content-Type": "application/json",
-          Authorization: `Bearer ${streamToken}`,
         }),
         body: JSON.stringify({ results }),
       },
@@ -209,7 +207,7 @@ export class ApiClient {
       throw new Error(`Failed to push tool results: ${res.status} - ${error}`);
     }
 
-    return res.json();
+    return res.json() as Promise<PushToolResultsResponse>;
   }
 
   /**
@@ -217,7 +215,6 @@ export class ApiClient {
    */
   async pushDiff(
     sessionId: string,
-    streamToken: string,
     diff: string
   ): Promise<PushDiffResponse> {
     const res = await fetchWithRetry(
@@ -226,7 +223,6 @@ export class ApiClient {
         method: "PUT",
         headers: this.getHeaders({
           "Content-Type": "text/plain",
-          Authorization: `Bearer ${streamToken}`,
         }),
         body: diff,
       },
@@ -238,7 +234,7 @@ export class ApiClient {
       throw new Error(`Failed to push diff: ${res.status} - ${error}`);
     }
 
-    return res.json();
+    return res.json() as Promise<PushDiffResponse>;
   }
 
   /**
@@ -246,7 +242,6 @@ export class ApiClient {
    */
   async completeSession(
     sessionId: string,
-    streamToken: string,
     data: CompleteSessionRequest = {}
   ): Promise<CompleteSessionResponse> {
     const res = await fetchWithRetry(
@@ -255,7 +250,6 @@ export class ApiClient {
         method: "POST",
         headers: this.getHeaders({
           "Content-Type": "application/json",
-          Authorization: `Bearer ${streamToken}`,
         }),
         body: JSON.stringify(data),
       },
@@ -267,7 +261,7 @@ export class ApiClient {
       throw new Error(`Failed to complete session: ${res.status} - ${error}`);
     }
 
-    return res.json();
+    return res.json() as Promise<CompleteSessionResponse>;
   }
 
   /**
@@ -275,7 +269,6 @@ export class ApiClient {
    */
   async updateTitle(
     sessionId: string,
-    streamToken: string,
     title: string
   ): Promise<UpdateSessionResponse> {
     const res = await fetchWithRetry(
@@ -284,7 +277,6 @@ export class ApiClient {
         method: "PATCH",
         headers: this.getHeaders({
           "Content-Type": "application/json",
-          Authorization: `Bearer ${streamToken}`,
         }),
         body: JSON.stringify({ title }),
       },
@@ -296,23 +288,20 @@ export class ApiClient {
       throw new Error(`Failed to update title: ${res.status} - ${error}`);
     }
 
-    return res.json();
+    return res.json() as Promise<UpdateSessionResponse>;
   }
 
   /**
    * Mark a session as interactive (enables browser feedback).
    */
   async markInteractive(
-    sessionId: string,
-    streamToken: string
+    sessionId: string
   ): Promise<MarkInteractiveResponse> {
     const res = await fetchWithRetry(
       `${this.baseUrl}/api/sessions/${sessionId}/interactive`,
       {
         method: "POST",
-        headers: this.getHeaders({
-          Authorization: `Bearer ${streamToken}`,
-        }),
+        headers: this.getHeaders(),
       },
       this.retryOptions
     );
@@ -322,24 +311,21 @@ export class ApiClient {
       throw new Error(`Failed to mark session interactive: ${res.status} - ${error}`);
     }
 
-    return res.json();
+    return res.json() as Promise<MarkInteractiveResponse>;
   }
 
   /**
    * Disable interactive mode for a session (called when daemon disconnects).
    */
   async disableInteractive(
-    sessionId: string,
-    streamToken: string
+    sessionId: string
   ): Promise<void> {
     // Use a short timeout since we're shutting down
     const res = await fetchWithRetry(
       `${this.baseUrl}/api/sessions/${sessionId}/interactive`,
       {
         method: "DELETE",
-        headers: this.getHeaders({
-          Authorization: `Bearer ${streamToken}`,
-        }),
+        headers: this.getHeaders(),
       },
       { maxRetries: 1, initialDelayMs: 500, maxDelayMs: 1000 }
     );
@@ -354,16 +340,13 @@ export class ApiClient {
    * Delete a session (used for empty sessions that have no messages).
    */
   async deleteSession(
-    sessionId: string,
-    streamToken: string
+    sessionId: string
   ): Promise<void> {
     const res = await fetchWithRetry(
       `${this.baseUrl}/api/sessions/${sessionId}`,
       {
         method: "DELETE",
-        headers: this.getHeaders({
-          Authorization: `Bearer ${streamToken}`,
-        }),
+        headers: this.getHeaders(),
       },
       this.retryOptions
     );

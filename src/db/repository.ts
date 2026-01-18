@@ -191,7 +191,7 @@ export class SessionRepository {
   }
 
   // Note: client_id is passed separately to avoid duplication in session object
-  createSession(session: Omit<Session, "created_at" | "updated_at" | "client_id">, streamTokenHash?: string, clientId?: string): Session {
+  createSession(session: Omit<Session, "created_at" | "updated_at" | "client_id">, clientId?: string): Session {
     const result = this.stmts.createSession.get(
       session.id,
       session.title,
@@ -205,7 +205,7 @@ export class SessionRepository {
       session.repo_url,
       session.status || "archived",
       session.last_activity_at,
-      streamTokenHash || null,
+      null, // stream_token_hash deprecated, using client_id for auth
       clientId || null,
       session.interactive ? 1 : 0
     ) as Record<string, unknown>;
@@ -551,51 +551,42 @@ export class SessionRepository {
     return transaction();
   }
 
-  verifyStreamToken(sessionId: string, tokenHash: string): boolean {
-    const stmt = this.db.prepare("SELECT stream_token_hash FROM sessions WHERE id = ? AND status = 'live'");
-    const result = stmt.get(sessionId) as { stream_token_hash: string | null } | null;
-
-    const storedHash = result?.stream_token_hash;
-    if (!storedHash) return false;
-
-    // Use constant-time comparison to prevent timing attacks
-    if (storedHash.length !== tokenHash.length) return false;
-
-    const storedBuffer = Buffer.from(storedHash, 'utf8');
-    const providedBuffer = Buffer.from(tokenHash, 'utf8');
-
-    // Bun supports crypto.timingSafeEqual
-    const crypto = require('crypto');
-    return crypto.timingSafeEqual(storedBuffer, providedBuffer);
-  }
-
   /**
-   * Update the stream token hash for an existing live session.
-   * Used when resuming a session after daemon restart.
+   * Verify that the given client ID owns the session.
+   * Returns true if the session exists and belongs to the client.
+   * For live sessions, also verifies the session is still live.
    */
-  updateStreamToken(sessionId: string, newTokenHash: string): boolean {
-    const stmt = this.db.prepare(`
-      UPDATE sessions SET stream_token_hash = ?, updated_at = datetime('now', 'utc')
-      WHERE id = ? AND status = 'live'
-    `);
-    const result = stmt.run(newTokenHash, sessionId);
-    return result.changes > 0;
+  verifyClientOwnership(sessionId: string, clientId: string | null, requireLive: boolean = true): boolean {
+    if (!clientId) return false;
+
+    const query = requireLive
+      ? "SELECT client_id FROM sessions WHERE id = ? AND status = 'live'"
+      : "SELECT client_id FROM sessions WHERE id = ?";
+
+    const stmt = this.db.prepare(query);
+    const result = stmt.get(sessionId) as { client_id: string | null } | null;
+
+    if (!result) return false;
+
+    // If session has no client_id (legacy), allow any authenticated client
+    if (!result.client_id) return true;
+
+    return result.client_id === clientId;
   }
 
   /**
-   * Restore a session to live status and update its stream token.
+   * Restore a session to live status.
    * Used to resume streaming to a completed/archived session.
    */
-  restoreSessionToLive(sessionId: string, newTokenHash: string): boolean {
+  restoreSessionToLive(sessionId: string): boolean {
     const stmt = this.db.prepare(`
       UPDATE sessions SET
-        stream_token_hash = ?,
         status = 'live',
         last_activity_at = datetime('now', 'utc'),
         updated_at = datetime('now', 'utc')
       WHERE id = ?
     `);
-    const result = stmt.run(newTokenHash, sessionId);
+    const result = stmt.run(sessionId);
     return result.changes > 0;
   }
 

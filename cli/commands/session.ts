@@ -1,12 +1,16 @@
 import { parseArgs } from "util";
 import { getServerUrl, isRepoAllowed, addAllowedRepo } from "../lib/config";
 import { getClientId } from "../lib/client-id";
-import { getRepoIdentifier } from "../lib/git";
+import { getRepoIdentifier, getRepoHttpsUrl } from "../lib/git";
 import { getDaemonStatus } from "../daemon";
+import { ApiClient } from "../daemon/api-client";
+import { getAdapterForPath } from "../adapters";
 import {
   addSharedSession,
   removeSharedSession,
+  getSharedSessions,
   findSessionByUuid,
+  findLatestSessionForProject,
   extractProjectPathFromSessionPath,
 } from "../lib/shared-sessions";
 
@@ -24,6 +28,8 @@ export async function session(args: string[]): Promise<void> {
       return sessionShare(args.slice(1));
     case "unshare":
       return sessionUnshare(args.slice(1));
+    case "feedback":
+      return sessionFeedback(args.slice(1));
     default:
       showHelp();
   }
@@ -36,8 +42,9 @@ Usage: openctl session <subcommand> [options]
 Subcommands:
   list              List sessions on the server
   delete <id>       Delete a session
-  share [id]        Share a session with the server
+  share [id]        Share a session (defaults to latest for current project)
   unshare [id]      Stop sharing a session
+  feedback [id]     Check for pending feedback (outputs JSON)
 
 Options for 'list':
   --mine            Only show sessions uploaded by this client
@@ -55,6 +62,10 @@ Options for 'share':
 
 Options for 'unshare':
   --server <url>    Server URL to unshare from (default: all servers)
+
+Options for 'feedback':
+  --server <url>    Server URL (default: from config)
+  Output: {} if no feedback, or {decision:"block",reason:"..."} if pending
 
 Examples:
   openctl session list              # List recent sessions
@@ -217,30 +228,38 @@ async function sessionShare(args: string[]): Promise<void> {
     allowPositionals: true,
   });
 
-  // 1. Get session UUID - from arg or CLAUDE_SESSION_ID env var
-  let sessionUuid = positionals[0];
-  if (!sessionUuid) {
-    sessionUuid = Bun.env.CLAUDE_SESSION_ID;
-    if (!sessionUuid) {
-      console.error("Error: Session ID required (or set CLAUDE_SESSION_ID)");
+  // 1. Get session UUID and path
+  let sessionUuid = positionals[0] || Bun.env.CLAUDE_SESSION_ID;
+  let sessionPath: string | null = null;
+  let projectPath: string | null = null;
+
+  if (sessionUuid) {
+    // Explicit session ID provided - find its path
+    sessionPath = await findSessionByUuid(sessionUuid);
+    if (!sessionPath) {
+      console.error(`Error: Session not found: ${sessionUuid}`);
       process.exit(1);
     }
+    projectPath = extractProjectPathFromSessionPath(sessionPath);
+  } else {
+    // No session ID - find latest session for current project
+    const cwd = process.cwd();
+    const latest = await findLatestSessionForProject(cwd);
+    if (!latest) {
+      console.error("Error: No session found for current project.");
+      console.error("Make sure you're in a project directory with an active Claude Code session.");
+      process.exit(1);
+    }
+    sessionUuid = latest.uuid;
+    sessionPath = latest.filePath;
+    projectPath = cwd;
+    console.log(`Found session: ${sessionUuid.slice(0, 8)}...`);
   }
 
-  // 2. Find session file path
-  const sessionPath = await findSessionByUuid(sessionUuid);
-  if (!sessionPath) {
-    console.error(`Error: Session not found: ${sessionUuid}`);
-    process.exit(1);
-  }
-
-  // 3. Extract project path from session
-  const projectPath = extractProjectPathFromSessionPath(sessionPath);
-
-  // 4. Get server URL
+  // 2. Get server URL
   const serverUrl = getServerUrl(values.server);
 
-  // 5. Check repo allowlist
+  // 3. Check repo allowlist
   const repoId = await getRepoIdentifier(projectPath || process.cwd());
   if (!repoId) {
     console.error("Error: Could not determine repository identifier.");
@@ -268,27 +287,55 @@ async function sessionShare(args: string[]): Promise<void> {
     }
   }
 
-  // 6. Add to shared sessions allowlist
-  await addSharedSession(sessionUuid, sessionPath, serverUrl);
-  console.log(`Sharing session with ${serverUrl}...`);
-
-  // 7. Ensure daemon is running
-  const status = await getDaemonStatus();
-  if (!status.running) {
-    console.log("Starting daemon...");
-    await startDaemonBackground(serverUrl);
-    await Bun.sleep(1000);
+  // 4. Get adapter for session info
+  const adapter = getAdapterForPath(sessionPath);
+  if (!adapter) {
+    console.error("Error: No adapter found for session file.");
+    process.exit(3);
   }
 
-  // 8. Poll for session URL (daemon will create session on server)
-  const sessionUrl = await pollForSessionUrl(sessionUuid, serverUrl);
-  if (!sessionUrl) {
-    console.error(`Error: Timed out waiting for session URL from ${serverUrl}`);
-    console.error("The daemon may not be running or the server may be unreachable.");
+  const sessionInfo = adapter.getSessionInfo(sessionPath);
+  const repoUrl = await getRepoHttpsUrl(projectPath || process.cwd());
+
+  // 5. Create session on server immediately
+  console.log(`Creating session on ${serverUrl}...`);
+  const api = new ApiClient(serverUrl);
+
+  let serverSession;
+  try {
+    serverSession = await api.createLiveSession({
+      title: "Live Session",
+      project_path: sessionInfo.projectPath,
+      harness_session_id: sessionInfo.harnessSessionId,
+      harness: adapter.id,
+      model: sessionInfo.model,
+      repo_url: repoUrl ?? undefined,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`Error: Failed to create session on server: ${message}`);
     process.exit(4);
   }
 
-  console.log(`Session shared: ${sessionUrl}`);
+  const sessionUrl = `${serverUrl}/sessions/${serverSession.id}`;
+
+  // 6. Add to shared sessions with server session info (for daemon to pick up)
+  await addSharedSession(sessionUuid, sessionPath, serverUrl, {
+    sessionId: serverSession.id,
+  });
+
+  // 7. Ensure daemon is running (for live streaming)
+  const status = await getDaemonStatus();
+  if (!status.running) {
+    console.log("Starting daemon for live streaming...");
+    await startDaemonBackground(serverUrl);
+  }
+
+  if (serverSession.resumed) {
+    console.log(`Resumed existing session: ${sessionUrl}`);
+  } else {
+    console.log(`Session shared: ${sessionUrl}`);
+  }
 }
 
 async function sessionUnshare(args: string[]): Promise<void> {
@@ -308,38 +355,43 @@ async function sessionUnshare(args: string[]): Promise<void> {
 
   const serverUrl = values.server; // undefined means all servers
 
-  await removeSharedSession(sessionUuid, serverUrl);
-  console.log(`Session unshared${serverUrl ? ` from ${serverUrl}` : ""}.`);
-}
+  // Get the shared session info before removing it
+  const config = getSharedSessions();
+  const sharedSession = config.sessions[sessionUuid];
 
-/**
- * Poll server for session URL by querying with claude_session_id.
- */
-async function pollForSessionUrl(
-  sessionUuid: string,
-  serverUrl: string,
-  timeoutMs = 30000
-): Promise<string | null> {
-  const startTime = Date.now();
-  const pollInterval = 500;
+  // Complete the session on each server before removing locally
+  if (sharedSession?.serverSessions) {
+    const serversToComplete = serverUrl
+      ? [serverUrl].filter((s) => sharedSession.servers.includes(s))
+      : sharedSession.servers;
 
-  while (Date.now() - startTime < timeoutMs) {
-    try {
-      const response = await fetch(
-        `${serverUrl}/api/sessions?claude_session_id=${encodeURIComponent(sessionUuid)}`
-      );
-      if (response.ok) {
-        const data = (await response.json()) as { session?: { id: string }; url?: string };
-        if (data.session?.id) {
-          return data.url || `${serverUrl}/sessions/${data.session.id}`;
+    for (const server of serversToComplete) {
+      const serverInfo = sharedSession.serverSessions[server];
+      if (serverInfo?.sessionId) {
+        const api = new ApiClient(server);
+
+        // Disable interactive mode first
+        try {
+          await api.disableInteractive(serverInfo.sessionId);
+        } catch {
+          // Non-critical - session might not have been interactive
+        }
+
+        // Complete the session
+        try {
+          await api.completeSession(serverInfo.sessionId);
+          console.log(`Session completed on ${server}`);
+        } catch (err) {
+          // Log but continue - session might already be complete or server unreachable
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`Warning: Failed to complete session on ${server}: ${message}`);
         }
       }
-    } catch {
-      // Server not reachable, continue polling
     }
-    await Bun.sleep(pollInterval);
   }
-  return null;
+
+  await removeSharedSession(sessionUuid, serverUrl);
+  console.log(`Session unshared${serverUrl ? ` from ${serverUrl}` : ""}.`);
 }
 
 /**
@@ -355,4 +407,125 @@ async function startDaemonBackground(serverUrl: string): Promise<void> {
     stdin: "ignore",
   });
   proc.unref();
+}
+
+interface PendingFeedback {
+  id: string;
+  content: string;
+  type: "message" | "diff_comment" | "suggested_edit";
+  source?: string;
+  created_at: string;
+  context?: {
+    file: string;
+    line: number;
+  };
+}
+
+interface PendingFeedbackResponse {
+  pending: boolean;
+  messages: PendingFeedback[];
+  session_id: string;
+}
+
+/**
+ * Check for pending feedback and output JSON for the stop hook.
+ * If feedback is pending, outputs { decision: "block", reason: "..." }
+ * Otherwise outputs {}
+ */
+async function sessionFeedback(args: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args,
+    options: {
+      server: { type: "string", short: "s" },
+    },
+    allowPositionals: true,
+  });
+
+  const sessionUuid = positionals[0] || Bun.env.CLAUDE_SESSION_ID;
+  if (!sessionUuid) {
+    // No session - allow stop
+    console.log("{}");
+    process.exit(0);
+  }
+
+  const serverUrl = getServerUrl(values.server);
+
+  try {
+    const url = `${serverUrl}/api/sessions/by-claude-session/${encodeURIComponent(sessionUuid)}/feedback/pending`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      // Session not found or error - allow stop
+      console.log("{}");
+      process.exit(0);
+    }
+
+    const data = (await response.json()) as PendingFeedbackResponse;
+
+    if (!data.pending || data.messages.length === 0) {
+      console.log("{}");
+      process.exit(0);
+    }
+
+    // Format feedback messages
+    const reason = formatBatchedFeedback(data.messages);
+
+    // Mark all as delivered (errors are non-critical, feedback was already formatted)
+    await Promise.all(
+      data.messages.map((m) =>
+        fetch(`${serverUrl}/api/sessions/${data.session_id}/feedback/${m.id}/delivered`, {
+          method: "POST",
+        }).catch((err) => {
+          // Log to stderr but don't fail - the important part (formatting feedback) succeeded
+          console.error(`[feedback] Failed to mark message ${m.id} as delivered: ${err instanceof Error ? err.message : String(err)}`);
+        })
+      )
+    );
+
+    // Output blocking response
+    console.log(JSON.stringify({ decision: "block", reason }));
+  } catch {
+    // Network error - allow stop
+    console.log("{}");
+    process.exit(0);
+  }
+}
+
+/**
+ * Format multiple feedback messages into a single batched message.
+ */
+function formatBatchedFeedback(messages: PendingFeedback[]): string {
+  if (messages.length === 1) {
+    return formatSingleFeedback(messages[0]!);
+  }
+
+  const header = `[${messages.length} remote feedback messages]`;
+  const formatted = messages.map((m, i) => {
+    const num = i + 1;
+    return `--- Feedback ${num} ---\n${formatSingleFeedback(m)}`;
+  });
+
+  return `${header}\n\n${formatted.join("\n\n")}\n\nPlease address all feedback above.`;
+}
+
+/**
+ * Format a single feedback message.
+ */
+function formatSingleFeedback(feedback: PendingFeedback): string {
+  if (feedback.type === "diff_comment" && feedback.context) {
+    return `[Feedback on ${feedback.context.file}:${feedback.context.line}]
+
+${feedback.content}`;
+  }
+
+  if (feedback.type === "suggested_edit" && feedback.context) {
+    return `[Suggested edit for ${feedback.context.file}]
+
+${feedback.content}`;
+  }
+
+  const source = feedback.source ? ` from ${feedback.source}` : "";
+  return `[Remote feedback${source}]
+
+${feedback.content}`;
 }

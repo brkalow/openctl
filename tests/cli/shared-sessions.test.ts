@@ -386,4 +386,130 @@ describe("Shared Sessions", () => {
       expect(loaded.sessions["test-uuid-123"].filePath).toBe("/path/to/session.jsonl");
     });
   });
+
+  describe("serverSessions storage", () => {
+    interface ServerSessionInfo {
+      sessionId: string;
+    }
+
+    interface SharedSessionWithServer extends SharedSession {
+      serverSessions?: Record<string, ServerSessionInfo>;
+    }
+
+    interface SharedSessionsConfigWithServer {
+      version: 1;
+      sessions: Record<string, SharedSessionWithServer>;
+    }
+
+    test("stores serverSessions when adding a session", () => {
+      const config: SharedSessionsConfigWithServer = { version: 1, sessions: {} };
+
+      const sessionUuid = "test-uuid-123";
+      const filePath = "/path/to/session.jsonl";
+      const serverUrl = "http://localhost:3000";
+      const serverSessionInfo: ServerSessionInfo = { sessionId: "srv_abc123" };
+
+      // Simulate addSharedSession logic with serverSessionInfo
+      config.sessions[sessionUuid] = {
+        filePath,
+        servers: [serverUrl],
+        sharedAt: new Date().toISOString(),
+        serverSessions: { [serverUrl]: serverSessionInfo },
+      };
+
+      expect(config.sessions[sessionUuid].serverSessions).toBeDefined();
+      expect(config.sessions[sessionUuid].serverSessions![serverUrl]).toEqual({
+        sessionId: "srv_abc123",
+      });
+    });
+
+    test("preserves serverSessions when adding a second server", () => {
+      const config: SharedSessionsConfigWithServer = {
+        version: 1,
+        sessions: {
+          "test-uuid-123": {
+            filePath: "/path/to/session.jsonl",
+            servers: ["http://localhost:3000"],
+            sharedAt: "2025-01-10T10:00:00.000Z",
+            serverSessions: {
+              "http://localhost:3000": { sessionId: "srv_abc123" },
+            },
+          },
+        },
+      };
+
+      const sessionUuid = "test-uuid-123";
+      const newServerUrl = "https://prod.example.com";
+      const newServerSessionInfo: ServerSessionInfo = { sessionId: "srv_def456" };
+
+      // Simulate addSharedSession logic for adding second server
+      const session = config.sessions[sessionUuid]!;
+      if (!session.servers.includes(newServerUrl)) {
+        session.servers.push(newServerUrl);
+      }
+      session.serverSessions = session.serverSessions || {};
+      session.serverSessions[newServerUrl] = newServerSessionInfo;
+
+      // Verify both server sessions exist
+      expect(session.servers).toHaveLength(2);
+      expect(session.serverSessions["http://localhost:3000"]).toEqual({
+        sessionId: "srv_abc123",
+      });
+      expect(session.serverSessions["https://prod.example.com"]).toEqual({
+        sessionId: "srv_def456",
+      });
+    });
+
+    test("each server has its own session ID", () => {
+      const config: SharedSessionsConfigWithServer = {
+        version: 1,
+        sessions: {
+          "test-uuid-123": {
+            filePath: "/path/to/session.jsonl",
+            servers: ["http://server-a.com", "http://server-b.com"],
+            sharedAt: "2025-01-10T10:00:00.000Z",
+            serverSessions: {
+              "http://server-a.com": { sessionId: "srv_aaa" },
+              "http://server-b.com": { sessionId: "srv_bbb" },
+            },
+          },
+        },
+      };
+
+      const session = config.sessions["test-uuid-123"]!;
+
+      // Each server has a unique session ID
+      expect(session.serverSessions!["http://server-a.com"]!.sessionId).toBe("srv_aaa");
+      expect(session.serverSessions!["http://server-b.com"]!.sessionId).toBe("srv_bbb");
+      expect(session.serverSessions!["http://server-a.com"]!.sessionId).not.toBe(
+        session.serverSessions!["http://server-b.com"]!.sessionId
+      );
+    });
+
+    test("serverSessions persists through serialization", () => {
+      const config: SharedSessionsConfigWithServer = {
+        version: 1,
+        sessions: {
+          "test-uuid-123": {
+            filePath: "/path/to/session.jsonl",
+            servers: ["http://localhost:3000"],
+            sharedAt: "2025-01-10T10:00:00.000Z",
+            serverSessions: {
+              "http://localhost:3000": { sessionId: "srv_abc123" },
+            },
+          },
+        },
+      };
+
+      // Write and read back
+      writeFileSync(TEST_CONFIG_PATH, JSON.stringify(config, null, 2));
+      const content = readFileSync(TEST_CONFIG_PATH, "utf8");
+      const loaded = JSON.parse(content) as SharedSessionsConfigWithServer;
+
+      expect(loaded.sessions["test-uuid-123"]!.serverSessions).toBeDefined();
+      expect(loaded.sessions["test-uuid-123"]!.serverSessions!["http://localhost:3000"]).toEqual({
+        sessionId: "srv_abc123",
+      });
+    });
+  });
 });
