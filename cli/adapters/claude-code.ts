@@ -377,18 +377,20 @@ function tryDecodePath(
 }
 
 /**
- * Strip system instruction and reminder tags from text
+ * Strip system instruction and reminder tags from text.
+ * Uses CLAUDE_CODE_SYSTEM_TAGS config for consistency.
  */
 function stripSystemTags(text: string): string {
-  // Remove <system_instruction>...</system_instruction> tags and content
-  let cleaned = text.replace(/<system_instruction>[\s\S]*?<\/system_instruction>/gi, "");
-  // Remove <system-instruction>...</system-instruction> tags and content
-  cleaned = cleaned.replace(/<system-instruction>[\s\S]*?<\/system-instruction>/gi, "");
-  // Remove <system-reminder>...</system-reminder> tags and content
-  cleaned = cleaned.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, "");
-  // Remove <local-command-caveat>...</local-command-caveat> tags and content
-  cleaned = cleaned.replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/gi, "");
-  // Trim leading/trailing whitespace
+  let cleaned = text;
+  for (const tagPattern of CLAUDE_CODE_SYSTEM_TAGS) {
+    if (tagPattern.style === "regex" && tagPattern.pattern) {
+      cleaned = cleaned.replace(tagPattern.pattern, "");
+    } else {
+      // XML style (default)
+      const regex = new RegExp(`<${tagPattern.tag}>[\\s\\S]*?<\\/${tagPattern.tag}>`, "gi");
+      cleaned = cleaned.replace(regex, "");
+    }
+  }
   return cleaned.trim();
 }
 

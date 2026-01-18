@@ -1,6 +1,7 @@
 import type { HarnessAdapter } from "./types";
 import { DEFAULT_ADAPTER_ID } from "./types";
 import { claudeCodeAdapter } from "./claude-code";
+import { debug } from "../lib/debug";
 
 export const adapters: HarnessAdapter[] = [claudeCodeAdapter];
 
@@ -25,8 +26,12 @@ export function getEnabledAdapters(enabledIds?: string[]): HarnessAdapter[] {
 export function getAdapterOrDefault(id: string): HarnessAdapter {
   const adapter = getAdapterById(id);
   if (adapter) return adapter;
-  console.warn(`Adapter '${id}' not found, using default`);
-  return getAdapterById(DEFAULT_ADAPTER_ID)!;
+  debug(`Adapter '${id}' not found, using default`);
+  const defaultAdapter = getAdapterById(DEFAULT_ADAPTER_ID);
+  if (!defaultAdapter) {
+    throw new Error(`Default adapter '${DEFAULT_ADAPTER_ID}' not registered`);
+  }
+  return defaultAdapter;
 }
 
 /**
