@@ -118,6 +118,15 @@ export function initializeDatabase(dbPath: string = process.env.DATABASE_PATH ||
   // Interactive session support
   safeAddColumn(db, "sessions", "interactive", "INTEGER DEFAULT 0");
 
+  // Agent session ID for multi-agent support (alias/replacement for claude_session_id).
+  // This column will be used by future adapters (Cursor, Codex, opencode) to store their
+  // native session identifiers. For now, it's backfilled from claude_session_id for
+  // existing sessions. New sessions should populate this field via the adapter.
+  safeAddColumn(db, "sessions", "agent_session_id", "TEXT");
+  // Backfill agent_session_id from claude_session_id for existing sessions
+  db.run(`UPDATE sessions SET agent_session_id = claude_session_id WHERE agent_session_id IS NULL AND claude_session_id IS NOT NULL`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_agent_session_id ON sessions(agent_session_id)`);
+
   // Feedback messages table (for interactive sessions)
   db.run(`
     CREATE TABLE IF NOT EXISTS feedback_messages (
@@ -184,6 +193,7 @@ export type Session = {
   title: string;
   description: string | null;
   claude_session_id: string | null;
+  agent_session_id: string | null;
   pr_url: string | null;
   share_token: string | null;
   project_path: string | null;
