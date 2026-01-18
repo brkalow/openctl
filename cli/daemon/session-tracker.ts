@@ -26,8 +26,13 @@ const DIFF_DEBOUNCE_MS = 2000;
 /** Tool names that modify files and should trigger diff capture */
 const FILE_MODIFYING_TOOLS = ["Write", "Edit", "NotebookEdit"];
 
-/** Pattern to detect the collaborate command in messages */
-const COLLABORATE_COMMAND_PATTERN = /\/(?:openctl:)?collaborate/i;
+/** Pattern to detect the share/collaborate commands in messages
+ * Matches both formats:
+ * - /openctl:share or /openctl:collaborate (at line start or after newline)
+ * - <command-message>openctl:share</command-message> (wrapped in tags)
+ */
+const SHARE_COMMAND_PATTERN =
+  /(?:(?:^|\n)\/openctl:|<command-message>openctl:)(?:share|collaborate)/i;
 
 /** Maximum messages to keep in memory after title derivation (to prevent unbounded growth) */
 const MAX_RETAINED_MESSAGES = 10;
@@ -37,7 +42,6 @@ interface ActiveSession {
   localPath: string;
   projectPath: string;
   sessionId: string;
-  streamToken: string;
   tail: Tail;
   lastActivity: Date;
   parseContext: ParseContext;
@@ -121,7 +125,11 @@ export class SessionTracker {
     }
   }
 
-  async startSession(filePath: string, adapter: HarnessAdapter): Promise<StartSessionResult> {
+  async startSession(
+    filePath: string,
+    adapter: HarnessAdapter,
+    existingSessionId?: string
+  ): Promise<StartSessionResult> {
     if (this.sessions.has(filePath)) {
       return 'already_tracking';
     }
@@ -150,92 +158,103 @@ export class SessionTracker {
 
     console.log(`[${adapter.name}] Session detected: ${filePath}`);
 
-    // Get the repo HTTPS URL for display in the UI
+    let id: string;
+    let resumed = false;
+    let message_count = 0;
+
+    // Create or resume session on server
     const repoUrl = await getRepoHttpsUrl(sessionInfo.projectPath);
 
     try {
-      const { id, stream_token, resumed, restored, message_count } = await this.api.createLiveSession({
+      const result = await this.api.createLiveSession({
         title: "Live Session",
         project_path: sessionInfo.projectPath,
         harness_session_id: sessionInfo.harnessSessionId,
         harness: adapter.id,
         model: sessionInfo.model,
-        repo_url: repoUrl,
+        repo_url: repoUrl ?? undefined,
       });
 
-      if (restored) {
+      id = result.id;
+      resumed = result.resumed;
+      message_count = result.message_count;
+
+      if (existingSessionId && id !== existingSessionId) {
+        console.log(`  Previous session ${existingSessionId} was invalid, created new: ${id}`);
+      } else if (result.restored) {
         console.log(`  Restored completed session: ${id} (${message_count} existing messages)`);
       } else if (resumed) {
         console.log(`  Resumed live session: ${id} (${message_count} existing messages)`);
       } else {
         console.log(`  Created server session: ${id}`);
       }
-
-      const parseContext: ParseContext = {
-        messages: [],
-        pendingToolUses: new Map(),
-      };
-
-      // If resuming, start from end of file to only capture new messages
-      // If new session, start from beginning to capture all messages
-      const tail = new Tail(filePath, { startFromEnd: resumed });
-      const session: ActiveSession = {
-        adapter,
-        localPath: filePath,
-        projectPath: sessionInfo.projectPath,
-        sessionId: id,
-        streamToken: stream_token,
-        tail,
-        lastActivity: new Date(),
-        parseContext,
-        // If resumed, assume title was already derived from previous run
-        titleDerived: resumed,
-        lineQueue: [],
-        isProcessing: false,
-        diffDebounceTimer: null,
-        messagesPushed: 0,
-        modifiedFiles: new Set(),
-        collaborationEnabled: false,
-        liveMode: false,
-      };
-
-      this.sessions.set(filePath, session);
-
-      // Listen for lines using EventTarget API
-      // Queue lines to prevent race conditions when multiple lines arrive at once
-      tail.addEventListener("line", ((event: CustomEvent<string>) => {
-        this.queueLine(session, event.detail);
-      }) as EventListener);
-
-      tail.addEventListener("error", ((event: CustomEvent<Error>) => {
-        console.error(`  Error tailing ${filePath}:`, event.detail);
-      }) as EventListener);
-
-      tail.start();
-
-      // Enable live mode after initial file read completes
-      // This ensures we only detect collaborate commands on NEW messages, not historical ones
-      setTimeout(() => {
-        session.liveMode = true;
-        debug(`Session ${session.sessionId} now in live mode`);
-      }, 2000);
-
-      // Capture initial diff state (useful when picking up in-progress sessions)
-      if (session.projectPath) {
-        // First, scan existing session content for files already modified
-        // (handles case where we pick up a session mid-way)
-        await this.scanExistingSessionForModifiedFiles(session);
-
-        this.captureAndPushDiff(session).catch(() => {
-          // Non-critical, continue
-        });
-      }
-
-      return 'started';
     } catch (err) {
       console.error(`  Failed to create session:`, err);
-      return 'retry_later'; // Server error, may succeed later
+      return 'retry_later';
     }
+
+    const parseContext: ParseContext = {
+      messages: [],
+      pendingToolUses: new Map(),
+    };
+
+    // If resuming and server has messages, start from end of file to only capture new messages
+    // If new session or server has no messages, start from beginning to capture all messages
+    // This handles the case where session was created (e.g., by share command) but daemon hasn't
+    // pushed any messages yet
+    const tail = new Tail(filePath, { startFromEnd: resumed && message_count > 0 });
+    const session: ActiveSession = {
+      adapter,
+      localPath: filePath,
+      projectPath: sessionInfo.projectPath,
+      sessionId: id,
+      tail,
+      lastActivity: new Date(),
+      parseContext,
+      // If resumed, assume title was already derived from previous run
+      titleDerived: resumed,
+      lineQueue: [],
+      isProcessing: false,
+      diffDebounceTimer: null,
+      messagesPushed: 0,
+      modifiedFiles: new Set(),
+      collaborationEnabled: false,
+      liveMode: false,
+    };
+
+    this.sessions.set(filePath, session);
+
+    // Listen for lines using EventTarget API
+    // Queue lines to prevent race conditions when multiple lines arrive at once
+    tail.addEventListener("line", ((event: CustomEvent<string>) => {
+      this.queueLine(session, event.detail);
+    }) as EventListener);
+
+    tail.addEventListener("error", ((event: CustomEvent<Error>) => {
+      console.error(`  Error tailing ${filePath}:`, event.detail);
+    }) as EventListener);
+
+    tail.start();
+
+    // Enable live mode after initial file read completes
+    // This ensures we only detect collaborate commands on NEW messages, not historical ones
+    setTimeout(() => {
+      session.liveMode = true;
+      debug(`Session ${session.sessionId} now in live mode`);
+    }, 2000);
+
+    // Capture initial diff state (useful when picking up in-progress sessions)
+    if (session.projectPath) {
+      // First, scan existing session content for files already modified
+      // (handles case where we pick up a session mid-way)
+      await this.scanExistingSessionForModifiedFiles(session);
+
+      this.captureAndPushDiff(session).catch(() => {
+        // Non-critical, continue
+      });
+    }
+
+    return 'started';
   }
 
   private queueLine(session: ActiveSession, line: string): void {
@@ -283,14 +302,12 @@ export class SessionTracker {
       debug(`Pushing ${messages.length} messages to server...`);
       const result = await this.api.pushMessages(
         session.sessionId,
-        session.streamToken,
         messages
       );
       session.messagesPushed += result.appended;
       debug(`Push result: appended=${result.appended}, total=${result.message_count}`);
     } catch (err) {
       console.error(`  Failed to push messages:`, err);
-      // Messages will be lost if server is unreachable - retry logic is in ApiClient
     }
 
     // Derive title after first few messages
@@ -301,11 +318,7 @@ export class SessionTracker {
       if (firstUserMessage && session.adapter.deriveTitle) {
         const title = session.adapter.deriveTitle(session.parseContext.messages);
         try {
-          await this.api.updateTitle(
-            session.sessionId,
-            session.streamToken,
-            title
-          );
+          await this.api.updateTitle(session.sessionId, title);
           session.titleDerived = true;
           console.log(`  Title: ${title}`);
         } catch {
@@ -372,16 +385,26 @@ export class SessionTracker {
     messages: NormalizedMessage[]
   ): void {
     // Skip if not in live mode (still processing historical messages)
-    if (!session.liveMode) return;
+    if (!session.liveMode) {
+      debug(`Skipping collaborate check: not in live mode`);
+      return;
+    }
 
     // Skip if collaboration already enabled
-    if (session.collaborationEnabled) return;
+    if (session.collaborationEnabled) {
+      debug(`Skipping collaborate check: already enabled`, JSON.stringify(session, null, 2));
+      return;
+    }
 
     for (const msg of messages) {
+      // Only check user messages for the collaborate command
+      if (msg.role !== "user") continue;
+
       for (const block of msg.content_blocks) {
         if (block.type === "text" && typeof block.text === "string") {
-          if (COLLABORATE_COMMAND_PATTERN.test(block.text)) {
-            debug(`Collaborate command detected in message`);
+          if (SHARE_COMMAND_PATTERN.test(block.text)) {
+            debug(`Collaborate command detected in user message`);
+            console.log(`  [collaborate] Detected /openctl:collaborate command`);
             this.enableCollaboration(session);
             return;
           }
@@ -397,7 +420,7 @@ export class SessionTracker {
     if (session.collaborationEnabled) return;
 
     try {
-      await this.api.markInteractive(session.sessionId, session.streamToken);
+      await this.api.markInteractive(session.sessionId);
       session.collaborationEnabled = true;
       console.log(`  Collaboration enabled for session: ${session.sessionId}`);
     } catch (err) {
@@ -526,11 +549,7 @@ export class SessionTracker {
       }
 
       debug(`Capturing diff (${diff.length} chars)`);
-      const result = await this.api.pushDiff(
-        session.sessionId,
-        session.streamToken,
-        diff
-      );
+      const result = await this.api.pushDiff(session.sessionId, diff);
       debug(`Diff pushed: ${result.diff_size} bytes`);
     } catch (err) {
       console.error(`  Failed to push diff:`, err);
@@ -557,7 +576,7 @@ export class SessionTracker {
     // Disable collaboration mode if it was enabled
     if (session.collaborationEnabled) {
       try {
-        await this.api.disableInteractive(session.sessionId, session.streamToken);
+        await this.api.disableInteractive(session.sessionId);
         console.log(`  Collaboration disabled for session: ${session.sessionId}`);
       } catch (err) {
         // Non-critical, continue with session cleanup
@@ -569,7 +588,7 @@ export class SessionTracker {
     if (session.messagesPushed === 0) {
       console.log(`  No messages captured, deleting empty session: ${session.sessionId}`);
       try {
-        await this.api.deleteSession(session.sessionId, session.streamToken);
+        await this.api.deleteSession(session.sessionId);
         console.log(`  Deleted: ${session.sessionId}`);
       } catch (err) {
         // Non-critical - empty session will just remain on server
@@ -595,15 +614,12 @@ export class SessionTracker {
     }
 
     try {
-      await this.api.completeSession(session.sessionId, session.streamToken, {
-        final_diff: finalDiff,
-      });
+      await this.api.completeSession(session.sessionId, { final_diff: finalDiff });
       console.log(`  Completed: ${session.sessionId}`);
     } catch (err) {
-      // 401/404 errors are expected if session was already completed or never created
       const errMsg = String(err);
-      if (errMsg.includes("401") || errMsg.includes("404")) {
-        console.log(`  Session already completed or not found: ${session.sessionId}`);
+      if (errMsg.includes("404")) {
+        console.log(`  Session not found: ${session.sessionId}`);
       } else {
         console.error(`  Failed to complete session:`, err);
       }

@@ -1,6 +1,6 @@
 # Collaboration Mode
 
-Collaboration mode is now enabled for this session. Remote reviewers can send you feedback through the openctl browser UI while you work.
+This session is now being shared and collaboration mode is enabled. Remote reviewers can send you feedback through the openctl browser UI while you work.
 
 When feedback arrives, you'll receive it automatically after completing your current task. Feedback may include:
 - User messages with questions or directions

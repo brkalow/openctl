@@ -99,7 +99,10 @@ describe("Interactive Sessions", () => {
   test("creates interactive session", async () => {
     const res = await fetch(`http://localhost:${serverPort}/api/sessions/live`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Openctl-Client-ID": "test-client-id",
+      },
       body: JSON.stringify({
         title: "Test Interactive",
         project_path: "/tmp",
@@ -111,7 +114,6 @@ describe("Interactive Sessions", () => {
     const data = await res.json();
 
     expect(data.id).toBeDefined();
-    expect(data.stream_token).toBeDefined();
     expect(data.interactive).toBe(true);
 
     // Verify in database
@@ -123,7 +125,10 @@ describe("Interactive Sessions", () => {
   test("creates non-interactive session by default", async () => {
     const res = await fetch(`http://localhost:${serverPort}/api/sessions/live`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Openctl-Client-ID": "test-client-id",
+      },
       body: JSON.stringify({
         title: "Test Non-Interactive",
         project_path: "/tmp",
