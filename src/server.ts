@@ -1,10 +1,17 @@
 import { initializeDatabase } from "./db/schema";
 import { SessionRepository } from "./db/repository";
+import { daemonConnections, type DaemonWebSocketData } from "./lib/daemon-connections";
+import { spawnedSessionRegistry } from "./lib/spawned-session-registry";
 import { createApiRoutes, addSessionSubscriber, removeSessionSubscriber, closeAllConnections, broadcastToSession } from "./routes/api";
 import { createPageRoutes } from "./routes/pages";
 import { handleBrowserMessage } from "./routes/browser-messages";
 import { handleGetPendingFeedback, handleMarkFeedbackDelivered, handleGetPendingFeedbackByClaudeSession, handleMarkSessionInteractive, handleMarkSessionFinished } from "./routes/feedback-api";
 import type { BrowserToServerMessage } from "./routes/websocket-types";
+import type { DaemonToServerMessage } from "./types/daemon-ws";
+import type { BrowserToServerMessage as SpawnedBrowserMessage } from "./types/browser-ws";
+import { sessionLimitEnforcer, getLimitExceededMessage } from "./lib/session-limits";
+import { sendInputLimiter, stopCleanupInterval } from "./lib/rate-limiter";
+import { logSessionEnded, logPermissionDecision, logLimitExceeded, auditLogger } from "./lib/audit-log";
 
 // Import HTML template - Bun will bundle CSS and JS referenced in this file
 import homepage from "../public/index.html";
@@ -23,10 +30,277 @@ const pages = createPageRoutes(repo);
 
 // WebSocket data attached to each connection
 interface BrowserWebSocketData {
+  type: "browser";
   sessionId: string;
 }
 
-type WebSocketData = BrowserWebSocketData;
+type WebSocketData = BrowserWebSocketData | DaemonWebSocketData;
+
+/**
+ * Handle messages from daemon WebSocket connections.
+ * These include connection announcements and session output.
+ */
+function handleDaemonMessage(
+  ws: import("bun").ServerWebSocket<DaemonWebSocketData>,
+  message: DaemonToServerMessage
+): void {
+  switch (message.type) {
+    case "daemon_connected": {
+      // Store the clientId in ws.data for later reference
+      ws.data.clientId = message.client_id;
+
+      daemonConnections.addDaemon(message.client_id, ws, message.capabilities);
+      break;
+    }
+
+    case "session_output": {
+      const session = spawnedSessionRegistry.getSession(message.session_id);
+      if (!session) {
+        console.warn(`[relay] Unknown session: ${message.session_id}`);
+        return;
+      }
+
+      // Track output size and check limits
+      const outputSize = JSON.stringify(message.messages).length;
+      const limitCheck = sessionLimitEnforcer.recordOutput(message.session_id, outputSize);
+
+      if (limitCheck.exceeded) {
+        // Log the limit exceeded
+        logLimitExceeded(message.session_id, limitCheck.exceeded);
+
+        // End the session due to limit
+        daemonConnections.sendToDaemon(session.daemonClientId, {
+          type: "end_session",
+          session_id: message.session_id,
+        });
+
+        broadcastToSession(message.session_id, {
+          type: "limit_exceeded",
+          limit: limitCheck.exceeded,
+          message: getLimitExceededMessage(limitCheck.exceeded),
+        });
+
+        console.log(`[limits] Ending session ${message.session_id} due to ${limitCheck.exceeded}`);
+        return;
+      }
+
+      // Update session status based on messages
+      for (const msg of message.messages) {
+        if (msg.type === "system" && msg.subtype === "init" && msg.session_id) {
+          // Start tracking limits when session initializes
+          sessionLimitEnforcer.startTracking(message.session_id);
+          spawnedSessionRegistry.updateSession(message.session_id, {
+            claudeSessionId: msg.session_id,
+            status: "running",
+          });
+        }
+        if (msg.type === "result") {
+          spawnedSessionRegistry.updateSession(message.session_id, {
+            status: "waiting",
+          });
+        }
+        if (msg.type === "assistant") {
+          spawnedSessionRegistry.updateSession(message.session_id, {
+            status: "running",
+          });
+        }
+      }
+
+      // Broadcast to browser WebSocket subscribers
+      broadcastToSession(message.session_id, {
+        type: "message",
+        messages: message.messages,
+      });
+      break;
+    }
+
+    case "session_ended": {
+      spawnedSessionRegistry.updateSession(message.session_id, {
+        status: "ended",
+        endedAt: new Date(),
+        exitCode: message.exit_code,
+        error: message.error,
+      });
+
+      // Stop tracking limits
+      sessionLimitEnforcer.stopTracking(message.session_id);
+
+      // Log session end for audit
+      logSessionEnded(
+        message.session_id,
+        message.reason || "completed",
+        message.exit_code
+      );
+
+      // Unregister from daemon
+      const clientId = ws.data.clientId;
+      if (clientId) {
+        daemonConnections.unregisterSpawnedSession(clientId, message.session_id);
+      }
+
+      // Broadcast to browsers
+      broadcastToSession(message.session_id, {
+        type: "complete",
+        exit_code: message.exit_code,
+        reason: message.reason,
+        error: message.error,
+      });
+      break;
+    }
+
+    case "question_prompt": {
+      // Relay AskUserQuestion to browser
+      broadcastToSession(message.session_id, {
+        type: "question_prompt",
+        tool_use_id: message.tool_use_id,
+        question: message.question,
+        options: message.options,
+      });
+      break;
+    }
+
+    case "permission_prompt": {
+      // Record the pending permission request
+      spawnedSessionRegistry.setPendingPermission(message.session_id, {
+        id: message.request_id,
+        tool: message.tool,
+        description: message.description,
+        details: message.details,
+      });
+
+      // Relay permission request to browser
+      broadcastToSession(message.session_id, {
+        type: "permission_prompt",
+        request_id: message.request_id,
+        tool: message.tool,
+        description: message.description,
+        details: message.details,
+      });
+      break;
+    }
+
+    default:
+      console.warn("[daemon-msg] Unknown message type:", (message as { type: string }).type);
+  }
+}
+
+/**
+ * Handle messages from browser WebSocket connections for spawned sessions.
+ * These include user input, interrupt, end session, and prompt responses.
+ */
+function handleSpawnedSessionMessage(
+  sessionId: string,
+  message: SpawnedBrowserMessage,
+  sendError?: (error: { type: string; code: string; message: string }) => void
+): void {
+  switch (message.type) {
+    case "user_message": {
+      // Rate limit per session
+      const rateCheck = sendInputLimiter.check(`input:${sessionId}`);
+      if (!rateCheck.allowed) {
+        // Send error back via WebSocket if callback provided
+        if (sendError) {
+          sendError({
+            type: "error",
+            code: "RATE_LIMITED",
+            message: "Too many messages. Please wait.",
+          });
+        }
+        return;
+      }
+
+      const session = spawnedSessionRegistry.getSession(sessionId);
+      if (!session) {
+        console.warn(`[ws] user_message for unknown spawned session: ${sessionId}`);
+        return;
+      }
+
+      // Record activity for idle timeout
+      sessionLimitEnforcer.recordActivity(sessionId);
+
+      // Relay to daemon
+      const sent = daemonConnections.sendToDaemon(session.daemonClientId, {
+        type: "send_input",
+        session_id: sessionId,
+        content: message.content,
+      });
+
+      if (!sent) {
+        console.error(`[ws] Failed to relay user_message to daemon`);
+      }
+      break;
+    }
+
+    case "interrupt": {
+      const session = spawnedSessionRegistry.getSession(sessionId);
+      if (!session) return;
+
+      daemonConnections.sendToDaemon(session.daemonClientId, {
+        type: "interrupt_session",
+        session_id: sessionId,
+      });
+      break;
+    }
+
+    case "end_session": {
+      const session = spawnedSessionRegistry.getSession(sessionId);
+      if (!session) return;
+
+      daemonConnections.sendToDaemon(session.daemonClientId, {
+        type: "end_session",
+        session_id: sessionId,
+      });
+      break;
+    }
+
+    case "question_response": {
+      const session = spawnedSessionRegistry.getSession(sessionId);
+      if (!session) return;
+
+      daemonConnections.sendToDaemon(session.daemonClientId, {
+        type: "question_response",
+        session_id: sessionId,
+        tool_use_id: message.tool_use_id,
+        answer: message.answer,
+      });
+      break;
+    }
+
+    case "permission_response": {
+      const session = spawnedSessionRegistry.getSession(sessionId);
+      if (!session) return;
+
+      // Record the permission decision
+      const pendingRequest = session.pendingPermissionRequest;
+      const tool = pendingRequest?.tool || "unknown";
+
+      spawnedSessionRegistry.recordPermissionDecision(sessionId, {
+        id: message.request_id,
+        tool,
+        description: pendingRequest?.description || "Permission decision",
+        decision: message.allow ? "allowed" : "denied",
+      });
+
+      // Log permission decision for audit
+      logPermissionDecision(sessionId, tool, message.allow, {
+        type: "browser",
+      });
+
+      // Relay to daemon
+      daemonConnections.sendToDaemon(session.daemonClientId, {
+        type: "permission_response",
+        session_id: sessionId,
+        request_id: message.request_id,
+        allow: message.allow,
+      });
+      break;
+    }
+
+    default:
+      // Not a spawned session message, ignore
+      break;
+  }
+}
 
 // Start server
 const server = Bun.serve({
@@ -160,10 +434,59 @@ const server = Bun.serve({
     "/api/stats/dashboard": {
       GET: (req) => api.getDashboardStats(req),
     },
+
+    // Daemon status endpoints
+    "/api/daemon/status": {
+      GET: () => api.getDaemonStatus(),
+    },
+
+    "/api/daemon/repos": {
+      GET: () => api.getDaemonRepos(),
+    },
+
+    "/api/daemon/list": {
+      GET: () => api.listConnectedDaemons(),
+    },
+
+    // Spawned session endpoints
+    "/api/sessions/spawn": {
+      POST: (req) => api.spawnSession(req),
+    },
+
+    "/api/sessions/spawned": {
+      GET: () => api.getSpawnedSessions(),
+    },
+
+    "/api/sessions/:id/info": {
+      GET: (req) => api.getSessionInfo(req.params.id),
+    },
+
+    // Health check endpoint
+    "/api/health": {
+      GET: () => api.getHealth(),
+    },
   },
 
   fetch(req, server) {
     const url = new URL(req.url);
+
+    // Handle WebSocket upgrade for daemon connections
+    if (url.pathname === "/api/daemon/ws") {
+      const clientIdHeader = req.headers.get("X-Openctl-Client-ID");
+
+      const upgraded = server.upgrade<DaemonWebSocketData>(req, {
+        data: {
+          type: "daemon",
+          clientId: clientIdHeader || undefined,
+        },
+      });
+
+      if (upgraded) {
+        return undefined; // Bun handles the upgrade
+      }
+
+      return new Response("WebSocket upgrade failed", { status: 500 });
+    }
 
     // Handle WebSocket upgrade for live session subscriptions (browser clients)
     const wsMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/ws$/);
@@ -182,7 +505,7 @@ const server = Bun.serve({
       }
 
       const upgraded = server.upgrade<BrowserWebSocketData>(req, {
-        data: { sessionId },
+        data: { type: "browser", sessionId },
       });
 
       if (upgraded) {
@@ -199,6 +522,15 @@ const server = Bun.serve({
     open(ws) {
       const data = ws.data as WebSocketData;
 
+      // Handle daemon connections
+      if (data.type === "daemon") {
+        // Daemon connections are fully handled in the message handler
+        // after receiving daemon_connected message
+        console.log("[ws] Daemon WebSocket opened, awaiting daemon_connected");
+        return;
+      }
+
+      // Handle browser connections
       // Add to subscriber list
       addSessionSubscriber(data.sessionId, ws as unknown as WebSocket);
 
@@ -224,7 +556,33 @@ const server = Bun.serve({
       try {
         const msg = JSON.parse(message.toString());
 
-        // Handle browser messages (subscribe, ping, user_message, etc.)
+        // Handle daemon messages
+        if (data.type === "daemon") {
+          handleDaemonMessage(ws as unknown as import("bun").ServerWebSocket<DaemonWebSocketData>, msg as DaemonToServerMessage);
+          return;
+        }
+
+        // Handle browser messages for spawned sessions
+        // Check if this session is a spawned session first
+        if (spawnedSessionRegistry.isSpawnedSession(data.sessionId)) {
+          handleSpawnedSessionMessage(
+            data.sessionId,
+            msg as SpawnedBrowserMessage,
+            (error) => ws.send(JSON.stringify(error))
+          );
+          // Also handle standard browser messages (subscribe, ping)
+          if (msg.type === "subscribe" || msg.type === "ping") {
+            handleBrowserMessage(
+              data.sessionId,
+              msg as BrowserToServerMessage,
+              repo,
+              (response) => ws.send(JSON.stringify(response))
+            );
+          }
+          return;
+        }
+
+        // Handle browser messages for regular (plugin-based) sessions
         handleBrowserMessage(
           data.sessionId,
           msg as BrowserToServerMessage,
@@ -238,18 +596,65 @@ const server = Bun.serve({
 
     close(ws) {
       const data = ws.data as WebSocketData;
-      removeSessionSubscriber(data.sessionId, ws as unknown as WebSocket);
+
+      // Handle daemon disconnection
+      if (data.type === "daemon" && data.clientId) {
+        daemonConnections.removeDaemon(data.clientId);
+        return;
+      }
+
+      // Handle browser disconnection
+      if (data.type === "browser") {
+        removeSessionSubscriber(data.sessionId, ws as unknown as WebSocket);
+      }
     },
 
     error(ws, error) {
       console.error("WebSocket error:", error);
       const data = ws.data as WebSocketData;
-      removeSessionSubscriber(data.sessionId, ws as unknown as WebSocket);
+
+      // Handle daemon error
+      if (data.type === "daemon" && data.clientId) {
+        daemonConnections.removeDaemon(data.clientId);
+        return;
+      }
+
+      // Handle browser error
+      if (data.type === "browser") {
+        removeSessionSubscriber(data.sessionId, ws as unknown as WebSocket);
+      }
     },
   },
 });
 
 console.log(`openctl running at http://${HOST}:${server.port}`);
+
+// Idle timeout checker - runs every minute
+const idleTimeoutInterval = setInterval(() => {
+  const idleSessions = sessionLimitEnforcer.checkAllIdleTimeouts();
+  for (const sessionId of idleSessions) {
+    const session = spawnedSessionRegistry.getSession(sessionId);
+    if (session && session.status !== "ended" && session.status !== "failed") {
+      console.log(`[limits] Ending idle session: ${sessionId}`);
+
+      // Log the idle timeout
+      logLimitExceeded(sessionId, "idle_timeout");
+
+      // End the session
+      daemonConnections.sendToDaemon(session.daemonClientId, {
+        type: "end_session",
+        session_id: sessionId,
+      });
+
+      // Notify browser subscribers
+      broadcastToSession(sessionId, {
+        type: "limit_exceeded",
+        limit: "idle_timeout",
+        message: getLimitExceededMessage("idle_timeout"),
+      });
+    }
+  }
+}, 60_000); // Check every minute
 
 // Graceful shutdown handling
 let isShuttingDown = false;
@@ -263,6 +668,11 @@ async function gracefulShutdown(signal: string) {
 
   console.log(`\nReceived ${signal}, shutting down gracefully...`);
 
+  // Stop intervals
+  console.log("Stopping intervals...");
+  clearInterval(idleTimeoutInterval);
+  stopCleanupInterval();
+
   // Close all WebSocket connections
   console.log("Closing WebSocket connections...");
   closeAllConnections();
@@ -270,6 +680,10 @@ async function gracefulShutdown(signal: string) {
   // Stop accepting new connections and close existing ones
   console.log("Stopping server...");
   server.stop();
+
+  // Flush audit logs
+  console.log("Flushing audit logs...");
+  await auditLogger.close();
 
   // Close database connection
   console.log("Closing database...");
