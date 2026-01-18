@@ -17,6 +17,9 @@ INPUT=$(cat)
 log "Received input: $INPUT"
 
 # Extract fields using simple parsing
+# NOTE: This grep/cut approach is fragile and will fail if values contain escaped
+# quotes or special characters. We avoid requiring jq since it may not be installed.
+# For our use case, session_id is a UUID (safe) and we only need the prompt prefix.
 SESSION_ID=$(echo "$INPUT" | grep -o '"session_id":"[^"]*"' | cut -d'"' -f4)
 USER_PROMPT=$(echo "$INPUT" | grep -o '"prompt":"[^"]*"' | cut -d'"' -f4)
 

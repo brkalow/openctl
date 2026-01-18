@@ -5,7 +5,8 @@
  * Sessions must be added to this allowlist before the daemon will track them.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { readdir, stat } from "fs/promises";
 import { dirname, join } from "path";
 
 const SHARED_SESSIONS_PATH = join(Bun.env.HOME || "~", ".openctl", "shared-sessions.json");
@@ -218,7 +219,7 @@ export async function findLatestSessionForProject(
   }
 
   try {
-    const entries = readdirSync(sessionDir, { withFileTypes: true });
+    const entries = await readdir(sessionDir, { withFileTypes: true });
     let latestFile: { uuid: string; filePath: string; mtime: number } | null = null;
 
     for (const entry of entries) {
@@ -227,8 +228,8 @@ export async function findLatestSessionForProject(
       }
 
       const filePath = join(sessionDir, entry.name);
-      const stat = statSync(filePath);
-      const mtime = stat.mtimeMs;
+      const fileStat = await stat(filePath);
+      const mtime = fileStat.mtimeMs;
 
       if (!latestFile || mtime > latestFile.mtime) {
         const uuid = entry.name.replace(".jsonl", "");
@@ -239,7 +240,7 @@ export async function findLatestSessionForProject(
     if (latestFile) {
       return { uuid: latestFile.uuid, filePath: latestFile.filePath };
     }
-  } catch (err) {
+  } catch {
     // Ignore read errors (e.g., permission issues)
   }
 
@@ -278,9 +279,9 @@ export async function findSessionByUuid(sessionUuid: string): Promise<string | n
 /**
  * Recursively search for a session file.
  */
-function findSessionFile(dir: string, filename: string): string | null {
+async function findSessionFile(dir: string, filename: string): Promise<string | null> {
   try {
-    const entries = readdirSync(dir, { withFileTypes: true });
+    const entries = await readdir(dir, { withFileTypes: true });
 
     for (const entry of entries) {
       const fullPath = join(dir, entry.name);
@@ -290,7 +291,7 @@ function findSessionFile(dir: string, filename: string): string | null {
         if (entry.name === "subagents") {
           continue;
         }
-        const found = findSessionFile(fullPath, filename);
+        const found = await findSessionFile(fullPath, filename);
         if (found) {
           return found;
         }

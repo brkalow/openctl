@@ -181,10 +181,14 @@ install_binary() {
 
     # Re-sign the binary on macOS (required after copying with sudo)
     if [ "$(uname -s)" = "Darwin" ]; then
+        local codesign_failed=0
         if [ -w "$INSTALL_DIR" ]; then
-            codesign --force --sign - "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null || true
+            codesign --force --sign - "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null || codesign_failed=1
         else
-            sudo codesign --force --sign - "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null || true
+            sudo codesign --force --sign - "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null || codesign_failed=1
+        fi
+        if [ "$codesign_failed" = "1" ]; then
+            warn "Code signing failed. The binary may be blocked by Gatekeeper on newer macOS versions."
         fi
     fi
 

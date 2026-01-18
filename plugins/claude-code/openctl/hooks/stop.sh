@@ -15,6 +15,8 @@ INPUT=$(cat)
 log "Received input: $INPUT"
 
 # Extract session_id using simple parsing
+# NOTE: This grep/cut approach is fragile with special characters, but session_id
+# is always a UUID so it's safe here. We avoid requiring jq for portability.
 SESSION_ID=$(echo "$INPUT" | grep -o '"session_id":"[^"]*"' | cut -d'"' -f4)
 
 # No session_id - allow stop

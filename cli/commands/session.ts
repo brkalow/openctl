@@ -8,6 +8,7 @@ import { getAdapterForPath } from "../adapters";
 import {
   addSharedSession,
   removeSharedSession,
+  getSharedSessions,
   findSessionByUuid,
   findLatestSessionForProject,
   extractProjectPathFromSessionPath,
@@ -311,7 +312,8 @@ async function sessionShare(args: string[]): Promise<void> {
       repo_url: repoUrl ?? undefined,
     });
   } catch (err) {
-    console.error(`Error: Failed to create session on server: ${err}`);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`Error: Failed to create session on server: ${message}`);
     process.exit(4);
   }
 
@@ -352,6 +354,41 @@ async function sessionUnshare(args: string[]): Promise<void> {
   }
 
   const serverUrl = values.server; // undefined means all servers
+
+  // Get the shared session info before removing it
+  const config = getSharedSessions();
+  const sharedSession = config.sessions[sessionUuid];
+
+  // Complete the session on each server before removing locally
+  if (sharedSession?.serverSessions) {
+    const serversToComplete = serverUrl
+      ? [serverUrl].filter((s) => sharedSession.servers.includes(s))
+      : sharedSession.servers;
+
+    for (const server of serversToComplete) {
+      const serverInfo = sharedSession.serverSessions[server];
+      if (serverInfo?.sessionId) {
+        const api = new ApiClient(server);
+
+        // Disable interactive mode first
+        try {
+          await api.disableInteractive(serverInfo.sessionId);
+        } catch {
+          // Non-critical - session might not have been interactive
+        }
+
+        // Complete the session
+        try {
+          await api.completeSession(serverInfo.sessionId);
+          console.log(`Session completed on ${server}`);
+        } catch (err) {
+          // Log but continue - session might already be complete or server unreachable
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`Warning: Failed to complete session on ${server}: ${message}`);
+        }
+      }
+    }
+  }
 
   await removeSharedSession(sessionUuid, serverUrl);
   console.log(`Session unshared${serverUrl ? ` from ${serverUrl}` : ""}.`);
@@ -433,13 +470,14 @@ async function sessionFeedback(args: string[]): Promise<void> {
     // Format feedback messages
     const reason = formatBatchedFeedback(data.messages);
 
-    // Mark all as delivered (errors are non-critical)
+    // Mark all as delivered (errors are non-critical, feedback was already formatted)
     await Promise.all(
       data.messages.map((m) =>
         fetch(`${serverUrl}/api/sessions/${data.session_id}/feedback/${m.id}/delivered`, {
           method: "POST",
-        }).catch(() => {
-          // Ignore errors - feedback was already formatted for delivery
+        }).catch((err) => {
+          // Log to stderr but don't fail - the important part (formatting feedback) succeeded
+          console.error(`[feedback] Failed to mark message ${m.id} as delivered: ${err instanceof Error ? err.message : String(err)}`);
         })
       )
     );

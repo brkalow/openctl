@@ -198,9 +198,11 @@ export class SessionTracker {
       pendingToolUses: new Map(),
     };
 
-    // If resuming, start from end of file to only capture new messages
-    // If new session, start from beginning to capture all messages
-    const tail = new Tail(filePath, { startFromEnd: resumed });
+    // If resuming and server has messages, start from end of file to only capture new messages
+    // If new session or server has no messages, start from beginning to capture all messages
+    // This handles the case where session was created (e.g., by share command) but daemon hasn't
+    // pushed any messages yet
+    const tail = new Tail(filePath, { startFromEnd: resumed && message_count > 0 });
     const session: ActiveSession = {
       adapter,
       localPath: filePath,
@@ -390,7 +392,7 @@ export class SessionTracker {
 
     // Skip if collaboration already enabled
     if (session.collaborationEnabled) {
-      debug(`Skipping collaborate check: already enabled`);
+      debug(`Skipping collaborate check: already enabled`, JSON.stringify(session, null, 2));
       return;
     }
 
@@ -400,9 +402,8 @@ export class SessionTracker {
 
       for (const block of msg.content_blocks) {
         if (block.type === "text" && typeof block.text === "string") {
-          const matches = SHARE_COMMAND_PATTERN.test(block.text);
-          debug(`Checking for collaborate command: matches=${matches}, text preview="${block.text.slice(0, 100)}..."`);
-          if (matches) {
+          if (SHARE_COMMAND_PATTERN.test(block.text)) {
+            debug(`Collaborate command detected in user message`);
             console.log(`  [collaborate] Detected /openctl:collaborate command`);
             this.enableCollaboration(session);
             return;
