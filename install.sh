@@ -179,6 +179,15 @@ install_binary() {
         sudo chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
     fi
 
+    # Re-sign the binary on macOS (required after copying with sudo)
+    if [ "$(uname -s)" = "Darwin" ]; then
+        if [ -w "$INSTALL_DIR" ]; then
+            codesign --force --sign - "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null || true
+        else
+            sudo codesign --force --sign - "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null || true
+        fi
+    fi
+
     info "Successfully installed ${BINARY_NAME} ${version_info} to ${INSTALL_DIR}/${BINARY_NAME}"
 
     # Check if INSTALL_DIR is in PATH (use colon delimiters to avoid substring matches)

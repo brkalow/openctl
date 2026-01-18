@@ -393,21 +393,10 @@ export function createApiRoutes(repo: SessionRepository) {
         return jsonError("Session not found", 404);
       }
 
-      // Check authorization: either stream token or client ID ownership
-      const authHeader = req.headers.get("Authorization");
-      if (authHeader?.startsWith("Bearer ")) {
-        // Stream token auth (used by daemon for live sessions)
-        const token = authHeader.slice(7);
-        const tokenHash = await hashToken(token);
-        if (!repo.verifyStreamToken(sessionId, tokenHash)) {
-          return jsonError("Invalid stream token", 401);
-        }
-      } else {
-        // Client ID auth (legacy sessions without client_id can be deleted by anyone)
-        const clientId = getClientId(req);
-        if (session.client_id && session.client_id !== clientId) {
-          return jsonError("Permission denied - session owned by different client", 403);
-        }
+      // Verify client ID ownership (don't require live status for delete)
+      const clientId = getClientId(req);
+      if (!repo.verifyClientOwnership(sessionId, clientId, false)) {
+        return jsonError("Permission denied - session owned by different client", 403);
       }
 
       const deleted = repo.deleteSession(sessionId);
@@ -425,16 +414,11 @@ export function createApiRoutes(repo: SessionRepository) {
           return jsonError("Session not found", 404);
         }
 
-        // Live sessions require stream token authorization
-        const authHeader = req.headers.get("Authorization");
+        // Live sessions require client ID authorization
+        const clientId = getClientId(req);
         if (session.status === "live") {
-          if (!authHeader?.startsWith("Bearer ")) {
-            return jsonError("Authorization required for live sessions", 401);
-          }
-          const token = authHeader.slice(7);
-          const tokenHash = await hashToken(token);
-          if (!repo.verifyStreamToken(sessionId, tokenHash)) {
-            return jsonError("Invalid stream token", 401);
+          if (!repo.verifyClientOwnership(sessionId, clientId)) {
+            return jsonError("Session not found or unauthorized", 401);
           }
         }
 
@@ -523,9 +507,14 @@ export function createApiRoutes(repo: SessionRepository) {
         const { title, project_path, harness_session_id, harness, model, repo_url, interactive = false } = body;
         // Support both old and new field names for backwards compatibility
         const harnessSessionId = harness_session_id || body.claude_session_id;
+        const clientId = getClientId(req);
 
         if (!title) {
           return jsonError("Title is required", 400);
+        }
+
+        if (!clientId) {
+          return jsonError("X-Openctl-Client-ID header required", 401);
         }
 
         // Check if we can resume an existing session (live or completed)
@@ -534,11 +523,6 @@ export function createApiRoutes(repo: SessionRepository) {
           let existingSession = repo.getLiveSessionByHarnessId(harnessSessionId, harness);
 
           if (existingSession) {
-            // Generate new stream token for the resumed session
-            const streamToken = generateStreamToken();
-            const streamTokenHash = await hashToken(streamToken);
-            repo.updateStreamToken(existingSession.id, streamTokenHash);
-
             // Update last activity
             repo.updateSession(existingSession.id, {
               last_activity_at: sqliteDatetimeNow(),
@@ -547,12 +531,11 @@ export function createApiRoutes(repo: SessionRepository) {
             const messageCount = repo.getMessageCount(existingSession.id);
             const lastIndex = repo.getLastMessageIndex(existingSession.id);
 
-            console.log(`Resumed existing session: ${existingSession.id} (${messageCount} messages)`);
+            console.log(`[createLiveSession] Resumed existing session: ${existingSession.id} (${messageCount} messages)`);
 
             return json({
               id: existingSession.id,
               url: `/sessions/${existingSession.id}`,
-              stream_token: streamToken,
               status: "live",
               resumed: true,
               restored: false,
@@ -565,19 +548,16 @@ export function createApiRoutes(repo: SessionRepository) {
           existingSession = repo.getSessionByHarnessId(harnessSessionId, harness);
           if (existingSession) {
             // Restore the session to live status
-            const streamToken = generateStreamToken();
-            const streamTokenHash = await hashToken(streamToken);
-            repo.restoreSessionToLive(existingSession.id, streamTokenHash);
+            repo.restoreSessionToLive(existingSession.id);
 
             const messageCount = repo.getMessageCount(existingSession.id);
             const lastIndex = repo.getLastMessageIndex(existingSession.id);
 
-            console.log(`Restored session to live: ${existingSession.id} (${messageCount} messages)`);
+            console.log(`[createLiveSession] Restored session to live: ${existingSession.id} (${messageCount} messages)`);
 
             return json({
               id: existingSession.id,
               url: `/sessions/${existingSession.id}`,
-              stream_token: streamToken,
               status: "live",
               resumed: true,
               restored: true,
@@ -589,9 +569,6 @@ export function createApiRoutes(repo: SessionRepository) {
 
         // Create new session
         const id = generateId();
-        const streamToken = generateStreamToken();
-        const streamTokenHash = await hashToken(streamToken);
-        const clientId = getClientId(req);
 
         repo.createSession(
           {
@@ -609,14 +586,14 @@ export function createApiRoutes(repo: SessionRepository) {
             last_activity_at: sqliteDatetimeNow(),
             interactive: Boolean(interactive),
           },
-          streamTokenHash,
-          clientId || undefined
+          clientId
         );
+
+        console.log(`[createLiveSession] Created new session: ${id}`);
 
         return json({
           id,
           url: `/sessions/${id}`,
-          stream_token: streamToken,
           status: "live",
           resumed: false,
           message_count: 0,
@@ -636,16 +613,10 @@ export function createApiRoutes(repo: SessionRepository) {
         const sizeError = validateContentLength(req, MAX_JSON_PAYLOAD_BYTES);
         if (sizeError) return sizeError;
 
-        // Verify stream token
-        const authHeader = req.headers.get("Authorization");
-        if (!authHeader?.startsWith("Bearer ")) {
-          return jsonError("Missing or invalid authorization", 401);
-        }
-
-        const token = authHeader.slice(7);
-        const tokenHash = await hashToken(token);
-        if (!repo.verifyStreamToken(sessionId, tokenHash)) {
-          return jsonError("Invalid stream token or session not live", 401);
+        // Verify client ownership
+        const clientId = getClientId(req);
+        if (!repo.verifyClientOwnership(sessionId, clientId)) {
+          return jsonError("Session not found or unauthorized", 401);
         }
 
         const session = repo.getSession(sessionId);
@@ -720,15 +691,10 @@ export function createApiRoutes(repo: SessionRepository) {
         const sizeError = validateContentLength(req, MAX_JSON_PAYLOAD_BYTES);
         if (sizeError) return sizeError;
 
-        const authHeader = req.headers.get("Authorization");
-        if (!authHeader?.startsWith("Bearer ")) {
-          return jsonError("Missing or invalid authorization", 401);
-        }
-
-        const token = authHeader.slice(7);
-        const tokenHash = await hashToken(token);
-        if (!repo.verifyStreamToken(sessionId, tokenHash)) {
-          return jsonError("Invalid stream token or session not live", 401);
+        // Verify client ownership
+        const clientId = getClientId(req);
+        if (!repo.verifyClientOwnership(sessionId, clientId)) {
+          return jsonError("Session not found or unauthorized", 401);
         }
 
         const session = repo.getSession(sessionId);
@@ -775,15 +741,10 @@ export function createApiRoutes(repo: SessionRepository) {
         const sizeError = validateContentLength(req, MAX_DIFF_PAYLOAD_BYTES);
         if (sizeError) return sizeError;
 
-        const authHeader = req.headers.get("Authorization");
-        if (!authHeader?.startsWith("Bearer ")) {
-          return jsonError("Missing or invalid authorization", 401);
-        }
-
-        const token = authHeader.slice(7);
-        const tokenHash = await hashToken(token);
-        if (!repo.verifyStreamToken(sessionId, tokenHash)) {
-          return jsonError("Invalid stream token or session not live", 401);
+        // Verify client ownership
+        const clientId = getClientId(req);
+        if (!repo.verifyClientOwnership(sessionId, clientId)) {
+          return jsonError("Session not found or unauthorized", 401);
         }
 
         const session = repo.getSession(sessionId);
@@ -832,15 +793,10 @@ export function createApiRoutes(repo: SessionRepository) {
     // Complete a live session
     async completeSession(req: Request, sessionId: string): Promise<Response> {
       try {
-        const authHeader = req.headers.get("Authorization");
-        if (!authHeader?.startsWith("Bearer ")) {
-          return jsonError("Missing or invalid authorization", 401);
-        }
-
-        const token = authHeader.slice(7);
-        const tokenHash = await hashToken(token);
-        if (!repo.verifyStreamToken(sessionId, tokenHash)) {
-          return jsonError("Invalid stream token or session not live", 401);
+        // Verify client ownership (don't require live status - session may have timed out)
+        const clientId = getClientId(req);
+        if (!repo.verifyClientOwnership(sessionId, clientId, false)) {
+          return jsonError("Session not found or unauthorized", 401);
         }
 
         const session = repo.getSession(sessionId);
@@ -900,15 +856,10 @@ export function createApiRoutes(repo: SessionRepository) {
     // Mark a live session as interactive (enables browser feedback)
     async markInteractive(req: Request, sessionId: string): Promise<Response> {
       try {
-        const authHeader = req.headers.get("Authorization");
-        if (!authHeader?.startsWith("Bearer ")) {
-          return jsonError("Missing or invalid authorization", 401);
-        }
-
-        const token = authHeader.slice(7);
-        const tokenHash = await hashToken(token);
-        if (!repo.verifyStreamToken(sessionId, tokenHash)) {
-          return jsonError("Invalid stream token or session not live", 401);
+        // Verify client ownership
+        const clientId = getClientId(req);
+        if (!repo.verifyClientOwnership(sessionId, clientId)) {
+          return jsonError("Session not found or unauthorized", 401);
         }
 
         const session = repo.getSession(sessionId);
@@ -928,15 +879,10 @@ export function createApiRoutes(repo: SessionRepository) {
     // Disable interactive mode for a session (called when daemon disconnects)
     async disableInteractive(req: Request, sessionId: string): Promise<Response> {
       try {
-        const authHeader = req.headers.get("Authorization");
-        if (!authHeader?.startsWith("Bearer ")) {
-          return jsonError("Missing or invalid authorization", 401);
-        }
-
-        const token = authHeader.slice(7);
-        const tokenHash = await hashToken(token);
-        if (!repo.verifyStreamToken(sessionId, tokenHash)) {
-          return jsonError("Invalid stream token or session not live", 401);
+        // Verify client ownership
+        const clientId = getClientId(req);
+        if (!repo.verifyClientOwnership(sessionId, clientId)) {
+          return jsonError("Session not found or unauthorized", 401);
         }
 
         const session = repo.getSession(sessionId);
@@ -975,21 +921,6 @@ export function createApiRoutes(repo: SessionRepository) {
       return json({ review, annotations_by_diff: annotationsByDiff });
     },
   };
-}
-
-// Stream token generation and hashing
-function generateStreamToken(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return `stk_${Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("")}`;
-}
-
-async function hashToken(token: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(token);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
 // WebSocket connection management

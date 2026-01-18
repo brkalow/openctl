@@ -164,7 +164,9 @@ async function handleSharedSessionsChange(
       const adapter = getAdapterForPath(session.filePath);
       if (adapter) {
         debug(`Starting to track shared session: ${uuid}`);
-        await tracker.startSession(session.filePath, adapter);
+        // Pass existing session ID if available (created by session share command)
+        const existingSessionId = session.serverSessions?.[serverUrl]?.sessionId;
+        await tracker.startSession(session.filePath, adapter, existingSessionId);
       } else {
         debug(`No adapter found for shared session: ${session.filePath}`);
       }

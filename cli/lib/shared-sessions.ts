@@ -5,10 +5,18 @@
  * Sessions must be added to this allowlist before the daemon will track them.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync } from "fs";
 import { dirname, join } from "path";
 
 const SHARED_SESSIONS_PATH = join(Bun.env.HOME || "~", ".openctl", "shared-sessions.json");
+
+/**
+ * Server-specific session info (session ID for a specific server).
+ */
+export interface ServerSessionInfo {
+  /** Server session ID */
+  sessionId: string;
+}
 
 /**
  * A session that has been explicitly shared.
@@ -20,6 +28,8 @@ export interface SharedSession {
   servers: string[];
   /** ISO timestamp when first shared */
   sharedAt: string;
+  /** Server session info keyed by server URL */
+  serverSessions?: Record<string, ServerSessionInfo>;
 }
 
 /**
@@ -79,7 +89,8 @@ export async function saveSharedSessions(config: SharedSessionsConfig): Promise<
 export async function addSharedSession(
   sessionUuid: string,
   filePath: string,
-  serverUrl: string
+  serverUrl: string,
+  serverSessionInfo?: ServerSessionInfo
 ): Promise<void> {
   const config = loadSharedSessionsSync();
 
@@ -88,6 +99,7 @@ export async function addSharedSession(
       filePath,
       servers: [serverUrl],
       sharedAt: new Date().toISOString(),
+      serverSessions: serverSessionInfo ? { [serverUrl]: serverSessionInfo } : undefined,
     };
   } else {
     // Session exists, add server if not already present
@@ -97,6 +109,11 @@ export async function addSharedSession(
     }
     // Update file path in case it changed
     session.filePath = filePath;
+    // Update server session info if provided
+    if (serverSessionInfo) {
+      session.serverSessions = session.serverSessions || {};
+      session.serverSessions[serverUrl] = serverSessionInfo;
+    }
   }
 
   await saveSharedSessions(config);
@@ -171,6 +188,72 @@ export function getSharedSessionsForServer(
  */
 export function getSharedSessionsPath(): string {
   return SHARED_SESSIONS_PATH;
+}
+
+/**
+ * Find the latest session for a given project path.
+ * Returns the UUID and file path of the most recently modified session.
+ */
+export async function findLatestSessionForProject(
+  projectPath: string
+): Promise<{ uuid: string; filePath: string } | null> {
+  const home = Bun.env.HOME;
+  if (!home) {
+    return null;
+  }
+
+  const projectsDir = join(home, ".claude", "projects");
+  if (!existsSync(projectsDir)) {
+    console.error(`No projects directory found: ${projectsDir}`);
+    return null;
+  }
+
+  // Encode the project path to match Claude Code's format
+  const encodedPath = encodeProjectPath(projectPath);
+  const sessionDir = join(projectsDir, encodedPath);
+
+  if (!existsSync(sessionDir)) {
+    console.error(`No session directory found for project: ${projectPath}`);
+    return null;
+  }
+
+  try {
+    const entries = readdirSync(sessionDir, { withFileTypes: true });
+    let latestFile: { uuid: string; filePath: string; mtime: number } | null = null;
+
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
+        continue;
+      }
+
+      const filePath = join(sessionDir, entry.name);
+      const stat = statSync(filePath);
+      const mtime = stat.mtimeMs;
+
+      if (!latestFile || mtime > latestFile.mtime) {
+        const uuid = entry.name.replace(".jsonl", "");
+        latestFile = { uuid, filePath, mtime };
+      }
+    }
+
+    if (latestFile) {
+      return { uuid: latestFile.uuid, filePath: latestFile.filePath };
+    }
+  } catch (err) {
+    // Ignore read errors (e.g., permission issues)
+  }
+
+  return null;
+}
+
+/**
+ * Encode a project path to the format used in .claude/projects
+ */
+function encodeProjectPath(projectPath: string): string {
+  // Claude Code encodes paths by replacing slashes with hyphens.
+  // The leading slash becomes a leading hyphen.
+  // e.g., /Users/bryce/code -> -Users-bryce-code
+  return projectPath.replace(/\//g, "-");
 }
 
 /**
