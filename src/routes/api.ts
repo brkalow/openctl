@@ -171,13 +171,15 @@ export function createApiRoutes(repo: SessionRepository) {
 
       const auth = await extractAuth(req);
 
-      // Check ownership via repository (handles user_id OR client_id)
-      const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+      // Allow access if session is shared or remote (browser-spawned)
+      const isPubliclyAccessible = session.share_token || session.remote;
 
-      if (!allowed) {
-        // TODO (followup): Also allow if session.share_token exists (public)
-        // TODO (followup): Also allow if session shared with authenticated user
-        return jsonError("Forbidden", 403);
+      if (!isPubliclyAccessible) {
+        // Check ownership via repository (handles user_id OR client_id)
+        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (!allowed) {
+          return jsonError("Forbidden", 403);
+        }
       }
 
       const messages = repo.getMessages(sessionId);
@@ -210,11 +212,15 @@ export function createApiRoutes(repo: SessionRepository) {
 
       const auth = await extractAuth(req);
 
-      // Check ownership via repository (handles user_id OR client_id)
-      const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+      // Allow access if session is shared or remote (browser-spawned)
+      const isPubliclyAccessible = session.share_token || session.remote;
 
-      if (!allowed) {
-        return jsonError("Forbidden", 403);
+      if (!isPubliclyAccessible) {
+        // Check ownership via repository (handles user_id OR client_id)
+        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (!allowed) {
+          return jsonError("Forbidden", 403);
+        }
       }
 
       const diffs = repo.getDiffs(sessionId);
@@ -1353,13 +1359,12 @@ export function createApiRoutes(repo: SessionRepository) {
     /**
      * GET /api/daemon/status
      * Returns the status of connected daemons.
-     * Requires client ID header.
+     * Requires authentication (user or client ID).
      */
-    getDaemonStatus(req: Request): Response {
-      const clientId = getClientId(req);
-      if (!clientId) {
-        return jsonError("X-Openctl-Client-ID header required", 401);
-      }
+    async getDaemonStatus(req: Request): Promise<Response> {
+      const auth = await extractAuth(req);
+      const authError = requireAuth(auth);
+      if (authError) return authError;
 
       // Import dynamically to avoid circular dependencies
       const { daemonConnections } = require("../lib/daemon-connections");
@@ -1370,15 +1375,14 @@ export function createApiRoutes(repo: SessionRepository) {
     /**
      * GET /api/daemon/repos
      * Returns list of allowed repositories for spawning sessions.
-     * Requires client ID header.
+     * Requires authentication (user or client ID).
      * For v1, returns an empty list - the DirectoryPicker allows custom path entry.
      * Future: could be populated from daemon capabilities or user settings.
      */
-    getDaemonRepos(req: Request): Response {
-      const clientId = getClientId(req);
-      if (!clientId) {
-        return jsonError("X-Openctl-Client-ID header required", 401);
-      }
+    async getDaemonRepos(req: Request): Promise<Response> {
+      const auth = await extractAuth(req);
+      const authError = requireAuth(auth);
+      if (authError) return authError;
 
       // Placeholder implementation - could be enhanced based on:
       // 1. Hard-coded list from config
@@ -1392,13 +1396,12 @@ export function createApiRoutes(repo: SessionRepository) {
     /**
      * GET /api/daemon/list
      * Returns all connected daemons (for multi-daemon scenarios).
-     * Requires client ID header.
+     * Requires authentication (user or client ID).
      */
-    listConnectedDaemons(req: Request): Response {
-      const clientId = getClientId(req);
-      if (!clientId) {
-        return jsonError("X-Openctl-Client-ID header required", 401);
-      }
+    async listConnectedDaemons(req: Request): Promise<Response> {
+      const auth = await extractAuth(req);
+      const authError = requireAuth(auth);
+      if (authError) return authError;
 
       const daemons = daemonConnections.getAllConnected().map((d: { clientId: string; connectedAt: Date; capabilities: unknown; activeSpawnedSessions: Set<string> }) => ({
         client_id: d.clientId,
@@ -1480,6 +1483,7 @@ export function createApiRoutes(repo: SessionRepository) {
         const sessionId = generateSpawnedSessionId();
 
         // Create DB session for persistence (status: live, interactive: true, remote: true)
+        // Pass user ID and client ID for ownership tracking
         repo.createSession({
           id: sessionId,
           title: body.prompt.slice(0, 100) + (body.prompt.length > 100 ? "..." : ""),
@@ -1495,7 +1499,7 @@ export function createApiRoutes(repo: SessionRepository) {
           last_activity_at: new Date().toISOString().replace("T", " ").slice(0, 19),
           interactive: true,
           remote: true,  // Mark as remote/spawned session
-        });
+        }, clientId || undefined, auth.userId || undefined);
 
         // Record analytics for spawned session creation
         analytics.recordSessionCreated(sessionId, {
@@ -1548,6 +1552,10 @@ export function createApiRoutes(repo: SessionRepository) {
           return jsonError("Failed to send to daemon", 500);
         }
 
+        // Update session with daemon's client_id for ownership tracking
+        // This allows the daemon to access the session it's running
+        repo.updateSession(sessionId, { client_id: daemon.clientId });
+
         return json({
           session_id: sessionId,
           status: "starting",
@@ -1587,13 +1595,12 @@ export function createApiRoutes(repo: SessionRepository) {
     /**
      * GET /api/sessions/spawned
      * List active spawned sessions.
-     * Requires client ID header.
+     * Requires authentication (user or client ID).
      */
-    getSpawnedSessions(req: Request): Response {
-      const clientId = getClientId(req);
-      if (!clientId) {
-        return jsonError("X-Openctl-Client-ID header required", 401);
-      }
+    async getSpawnedSessions(req: Request): Promise<Response> {
+      const auth = await extractAuth(req);
+      const authError = requireAuth(auth);
+      if (authError) return authError;
 
       const sessions = spawnedSessionRegistry.getActiveSessions();
 
@@ -1765,26 +1772,15 @@ export function createApiRoutes(repo: SessionRepository) {
       const dbSession = repo.getSession(sessionId);
       if (dbSession) {
         // Check if session is shared (has share_token) - allow public access
-        if (dbSession.share_token) {
-          return json({
-            id: dbSession.id,
-            type: "archived",
-            status: dbSession.status,
-            title: dbSession.title,
-            description: dbSession.description,
-            project_path: dbSession.project_path,
-            model: dbSession.model,
-            harness: dbSession.harness,
-            claude_session_id: dbSession.claude_session_id,
-            created_at: dbSession.created_at,
-            last_activity_at: dbSession.last_activity_at,
-          });
-        }
+        // Also allow access to remote sessions (browser-spawned) for any authenticated user
+        const isPubliclyAccessible = dbSession.share_token || dbSession.remote;
 
-        // Check ownership for non-shared sessions
-        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, clientId);
-        if (!allowed) {
-          return jsonError("Not authorized to access this session", 403);
+        if (!isPubliclyAccessible) {
+          // Check ownership for non-shared, non-remote sessions
+          const { allowed } = repo.verifyOwnership(sessionId, auth.userId, clientId);
+          if (!allowed) {
+            return jsonError("Not authorized to access this session", 403);
+          }
         }
 
         return json({

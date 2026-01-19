@@ -324,6 +324,10 @@ export class SessionRepository {
       fields.push("last_activity_at = ?");
       values.push(updates.last_activity_at);
     }
+    if (updates.client_id !== undefined) {
+      fields.push("client_id = ?");
+      values.push(updates.client_id);
+    }
 
     if (fields.length === 0) return this.getSession(id);
 

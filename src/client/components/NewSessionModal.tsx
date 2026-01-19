@@ -59,6 +59,7 @@ export function NewSessionModal({ daemonStatus, onClose }: NewSessionModalProps)
       const res = await fetch("/api/sessions/spawn", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           prompt: formData.prompt,
           cwd: formData.cwd,

@@ -29,7 +29,9 @@ export function useDaemonStatus(pollInterval = 5000): DaemonStatus {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch("/api/daemon/status");
+      const res = await fetch("/api/daemon/status", {
+        credentials: "include",
+      });
       if (res.ok) {
         const data = await res.json();
         setStatus(data);
