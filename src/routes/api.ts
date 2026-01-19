@@ -1301,8 +1301,10 @@ export function createApiRoutes(repo: SessionRepository) {
         });
 
         if (!sent) {
+          // Clean up all session state on failure
           spawnedSessionRegistry.deleteSession(sessionId);
           daemonConnections.unregisterSpawnedSession(daemon.clientId, sessionId);
+          repo.deleteSession(sessionId);
           return jsonError("Failed to send to daemon", 500);
         }
 
