@@ -342,6 +342,7 @@ export type StatType =
   | "sessions_live"
   | "sessions_remote"
   | "prompts_sent"
+  | "messages_total"
   | "lines_added"
   | "lines_removed"
   | "files_changed"
