@@ -117,6 +117,9 @@ export function initializeDatabase(dbPath: string = process.env.DATABASE_PATH ||
   // Interactive session support
   safeAddColumn(db, "sessions", "interactive", "INTEGER DEFAULT 0");
 
+  // Remote session support (daemon-spawned headless sessions)
+  safeAddColumn(db, "sessions", "remote", "INTEGER DEFAULT 0");
+
   // Feedback messages table (for interactive sessions)
   db.run(`
     CREATE TABLE IF NOT EXISTS feedback_messages (
@@ -193,6 +196,7 @@ export type Session = {
   last_activity_at: string | null;
   client_id: string | null;
   interactive: boolean;
+  remote: boolean;  // true for daemon-spawned headless sessions
   created_at: string;
   updated_at: string;
 };

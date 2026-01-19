@@ -1,7 +1,7 @@
 import { initializeDatabase } from "./db/schema";
 import { SessionRepository } from "./db/repository";
 import { daemonConnections, type DaemonWebSocketData } from "./lib/daemon-connections";
-import { spawnedSessionRegistry } from "./lib/spawned-session-registry";
+import { spawnedSessionRegistry, type ParsedDiff } from "./lib/spawned-session-registry";
 import { createApiRoutes, addSessionSubscriber, removeSessionSubscriber, closeAllConnections, broadcastToSession } from "./routes/api";
 import { createPageRoutes } from "./routes/pages";
 import { handleBrowserMessage } from "./routes/browser-messages";
@@ -32,6 +32,7 @@ const pages = createPageRoutes(repo);
 interface BrowserWebSocketData {
   type: "browser";
   sessionId: string;
+  isSpawned?: boolean; // True for browser-initiated sessions via daemon
 }
 
 type WebSocketData = BrowserWebSocketData | DaemonWebSocketData;
@@ -84,6 +85,33 @@ function handleDaemonMessage(
         return;
       }
 
+      // Store messages to DB for persistence (instead of in-memory cache)
+      const messagesToStore = message.messages.map((msg) => {
+        // Extract text content for the legacy content field
+        const contentBlocks = msg.message?.content || [];
+        const textContent = contentBlocks
+          .filter((b): b is { type: "text"; text: string } => b.type === "text" && typeof b.text === "string")
+          .map((b) => b.text)
+          .join("\n");
+
+        return {
+          session_id: message.session_id,
+          role: msg.message?.role || msg.type,
+          content: textContent,
+          content_blocks: contentBlocks,
+          timestamp: new Date().toISOString(),
+        };
+      });
+
+      if (messagesToStore.length > 0) {
+        repo.addMessagesWithIndices(message.session_id, messagesToStore);
+      }
+
+      // Update DB activity timestamp
+      repo.updateSession(message.session_id, {
+        last_activity_at: new Date().toISOString().replace("T", " ").slice(0, 19),
+      });
+
       // Update session status based on messages
       for (const msg of message.messages) {
         if (msg.type === "system" && msg.subtype === "init" && msg.session_id) {
@@ -92,6 +120,15 @@ function handleDaemonMessage(
           spawnedSessionRegistry.updateSession(message.session_id, {
             claudeSessionId: msg.session_id,
             status: "running",
+          });
+          // Update DB with claude session ID
+          repo.updateSession(message.session_id, {
+            claude_session_id: msg.session_id,
+          });
+          // Broadcast the claude session ID to connected browsers
+          broadcastToSession(message.session_id, {
+            type: "session_init",
+            claude_session_id: msg.session_id,
           });
         }
         if (msg.type === "result") {
@@ -120,6 +157,12 @@ function handleDaemonMessage(
         endedAt: new Date(),
         exitCode: message.exit_code,
         error: message.error,
+      });
+
+      // Update DB status to complete
+      repo.updateSession(message.session_id, {
+        status: "complete",
+        last_activity_at: new Date().toISOString().replace("T", " ").slice(0, 19),
       });
 
       // Stop tracking limits
@@ -179,9 +222,150 @@ function handleDaemonMessage(
       break;
     }
 
+    case "control_request": {
+      // Record the pending control request
+      spawnedSessionRegistry.setPendingPermission(message.session_id, {
+        id: message.request_id,
+        tool: message.request.tool_name,
+        description: message.request.decision_reason || `Use ${message.request.tool_name} tool`,
+        details: message.request.input,
+      });
+
+      // Relay control request to browser (using the browser-ws format)
+      broadcastToSession(message.session_id, {
+        type: "control_request",
+        request_id: message.request_id,
+        tool_name: message.request.tool_name,
+        tool_use_id: message.request.tool_use_id,
+        input: message.request.input,
+        decision_reason: message.request.decision_reason,
+        blocked_path: message.request.blocked_path,
+      });
+      break;
+    }
+
+    case "session_diff": {
+      // Parse and store the diff
+      const parsedDiffs = parseDiffForSpawnedSession(
+        message.diff,
+        message.session_id,
+        new Set(message.modified_files)
+      );
+
+      // Store diffs in DB (clear existing and add new)
+      repo.clearDiffs(message.session_id);
+      if (parsedDiffs.length > 0) {
+        repo.addDiffs(parsedDiffs.map((d, index) => ({
+          session_id: message.session_id,
+          filename: d.filename,
+          diff_content: d.diff_content,
+          diff_index: index,
+          additions: d.additions,
+          deletions: d.deletions,
+          is_session_relevant: d.is_session_relevant,
+        })));
+      }
+
+      // Broadcast diff update to browsers
+      broadcastToSession(message.session_id, {
+        type: "diff_update",
+        diffs: parsedDiffs,
+      });
+
+      console.log(`[relay] Diff update for session ${message.session_id}: ${parsedDiffs.length} files`);
+      break;
+    }
+
     default:
       console.warn("[daemon-msg] Unknown message type:", (message as { type: string }).type);
   }
+}
+
+/**
+ * Parse a diff string into parsed diff objects for spawned sessions.
+ * Similar to parseDiffData in api.ts but returns ParsedDiff format.
+ */
+function parseDiffForSpawnedSession(
+  content: string,
+  sessionId: string,
+  modifiedFiles: Set<string>
+): ParsedDiff[] {
+  const diffs: ParsedDiff[] = [];
+  const trimmed = content.trim();
+
+  if (!trimmed) return diffs;
+
+  // Split by "diff --git" to handle multiple files
+  const parts = trimmed.split(/(?=diff --git)/);
+
+  parts.forEach((part) => {
+    const partTrimmed = part.trim();
+    if (!partTrimmed) return;
+
+    // Extract filename from diff header
+    let filename: string | null = null;
+    const filenameMatch = partTrimmed.match(/diff --git a\/(.+?) b\//);
+    if (filenameMatch?.[1]) {
+      filename = filenameMatch[1];
+    } else {
+      // Try to get filename from +++ line
+      const plusMatch = partTrimmed.match(/\+\+\+ [ab]\/(.+)/);
+      if (plusMatch?.[1]) {
+        filename = plusMatch[1];
+      }
+    }
+
+    // Count additions and deletions
+    let additions = 0;
+    let deletions = 0;
+    const lines = partTrimmed.split("\n");
+    for (const line of lines) {
+      if (line.startsWith("+") && !line.startsWith("+++")) additions++;
+      else if (line.startsWith("-") && !line.startsWith("---")) deletions++;
+    }
+
+    // Determine relevance based on modified files
+    let isRelevant = true;
+    if (filename && modifiedFiles.size > 0) {
+      // Normalize path for comparison
+      const normalized = filename.replace(/^\.\//, "").replace(/\/+/g, "/");
+      isRelevant = modifiedFiles.has(normalized) ||
+        modifiedFiles.has(filename) ||
+        Array.from(modifiedFiles).some(f => {
+          const normalizedModified = f.replace(/^\.\//, "").replace(/\/+/g, "/");
+          return f.endsWith(normalized) || normalized.endsWith(normalizedModified) ||
+                 normalizedModified.endsWith(normalized);
+        });
+    }
+
+    diffs.push({
+      filename: filename || "unknown",
+      diff_content: partTrimmed,
+      additions,
+      deletions,
+      is_session_relevant: isRelevant,
+    });
+  });
+
+  // If no "diff --git" markers, treat as single diff
+  if (diffs.length === 0 && trimmed) {
+    let additions = 0;
+    let deletions = 0;
+    const lines = trimmed.split("\n");
+    for (const line of lines) {
+      if (line.startsWith("+") && !line.startsWith("+++")) additions++;
+      else if (line.startsWith("-") && !line.startsWith("---")) deletions++;
+    }
+    diffs.push({
+      filename: "unknown",
+      diff_content: trimmed,
+      additions,
+      deletions,
+      is_session_relevant: true,
+    });
+  }
+
+  return diffs;
 }
 
 /**
@@ -292,6 +476,48 @@ function handleSpawnedSessionMessage(
         session_id: sessionId,
         request_id: message.request_id,
         allow: message.allow,
+      });
+      break;
+    }
+
+    case "control_response": {
+      const session = spawnedSessionRegistry.getSession(sessionId);
+      if (!session) return;
+
+      // Record the permission decision
+      const pendingRequest = session.pendingPermissionRequest;
+      const tool = pendingRequest?.tool || "unknown";
+
+      spawnedSessionRegistry.recordPermissionDecision(sessionId, {
+        id: message.request_id,
+        tool,
+        description: pendingRequest?.description || "Control request decision",
+        decision: message.allow ? "allowed" : "denied",
+      });
+
+      // Log permission decision for audit
+      logPermissionDecision(sessionId, tool, message.allow, {
+        type: "browser",
+      });
+
+      // Relay to daemon with SDK format
+      // Note: SDK requires updatedInput to be a record for allow responses,
+      // so we use the original input if no modifications were provided
+      const originalInput = (pendingRequest?.details as Record<string, unknown>) ?? {};
+      daemonConnections.sendToDaemon(session.daemonClientId, {
+        type: "control_response",
+        session_id: sessionId,
+        request_id: message.request_id,
+        response: {
+          subtype: "success",
+          request_id: message.request_id,
+          response: message.allow
+            ? {
+                behavior: "allow" as const,
+                updatedInput: message.updatedInput ?? originalInput,
+              }
+            : { behavior: "deny" as const, message: message.message || "User denied the action" },
+        },
       });
       break;
     }
@@ -492,6 +718,24 @@ const server = Bun.serve({
     const wsMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/ws$/);
     if (wsMatch) {
       const sessionId = wsMatch[1];
+
+      // Check if this is a spawned session (in-memory registry)
+      const spawnedSession = spawnedSessionRegistry.getSession(sessionId);
+      if (spawnedSession) {
+        // Allow WebSocket connection even for ended/failed sessions
+        // so the client can receive the error message
+        const upgraded = server.upgrade<BrowserWebSocketData>(req, {
+          data: { type: "browser", sessionId, isSpawned: true },
+        });
+
+        if (upgraded) {
+          return undefined;
+        }
+
+        return new Response("WebSocket upgrade failed", { status: 500 });
+      }
+
+      // Check if this is an archived session (database)
       const session = repo.getSession(sessionId);
 
       if (!session) {
@@ -504,8 +748,10 @@ const server = Bun.serve({
         return new Response("WebSocket only available for live sessions", { status: 410 });
       }
 
+      // Use session.remote to determine if this is a spawned session
+      // that's not currently in the registry (e.g., daemon disconnected or server restarted)
       const upgraded = server.upgrade<BrowserWebSocketData>(req, {
-        data: { type: "browser", sessionId },
+        data: { type: "browser", sessionId, isSpawned: session.remote },
       });
 
       if (upgraded) {
@@ -534,7 +780,52 @@ const server = Bun.serve({
       // Add to subscriber list
       addSessionSubscriber(data.sessionId, ws as unknown as WebSocket);
 
-      // Send connected message with current state including interactive info
+      // Check if this is a spawned session (browser-initiated via daemon)
+      const browserData = data as BrowserWebSocketData;
+      if (browserData.isSpawned) {
+        const spawnedSession = spawnedSessionRegistry.getSession(data.sessionId);
+        const dbSession = repo.getSession(data.sessionId);
+        const messageCount = repo.getMessageCount(data.sessionId);
+        const lastIndex = repo.getLastMessageIndex(data.sessionId);
+
+        // Determine status: use registry if available, otherwise derive from DB
+        // If not in registry but DB says "live", daemon is disconnected
+        let status: string;
+        if (spawnedSession) {
+          status = spawnedSession.status;
+        } else if (dbSession?.status === "live") {
+          // Spawned session not in registry but DB says live = daemon disconnected
+          status = "disconnected";
+        } else {
+          // Session completed/archived - use DB status
+          status = dbSession?.status || "ended";
+        }
+
+        ws.send(JSON.stringify({
+          type: "connected",
+          session_id: data.sessionId,
+          status,
+          message_count: messageCount,
+          last_index: lastIndex,
+          interactive: true, // Spawned sessions are always interactive
+          claude_state: "unknown" as const,
+          is_spawned: true,
+          claude_session_id: dbSession?.claude_session_id || spawnedSession?.claudeSessionId,
+        }));
+
+        // If session already ended/failed (e.g., startup error), send the complete message immediately
+        if (spawnedSession && (spawnedSession.status === "ended" || spawnedSession.status === "failed")) {
+          ws.send(JSON.stringify({
+            type: "complete",
+            exit_code: spawnedSession.exitCode || 1,
+            reason: "error",
+            error: spawnedSession.error || "Session failed to start",
+          }));
+        }
+        return;
+      }
+
+      // Send connected message with current state including interactive info (database sessions)
       const session = repo.getSession(data.sessionId);
       const messageCount = repo.getMessageCount(data.sessionId);
       const lastIndex = repo.getLastMessageIndex(data.sessionId);
@@ -570,14 +861,53 @@ const server = Bun.serve({
             msg as SpawnedBrowserMessage,
             (error) => ws.send(JSON.stringify(error))
           );
-          // Also handle standard browser messages (subscribe, ping)
-          if (msg.type === "subscribe" || msg.type === "ping") {
-            handleBrowserMessage(
-              data.sessionId,
-              msg as BrowserToServerMessage,
-              repo,
-              (response) => ws.send(JSON.stringify(response))
-            );
+
+          // Handle subscribe for spawned sessions - replay messages and diffs from DB
+          if (msg.type === "subscribe") {
+            const fromIndex = typeof msg.from_index === "number" ? msg.from_index : 0;
+
+            // Query messages from DB
+            const dbMessages = repo.getMessages(data.sessionId);
+            const filteredMessages = dbMessages.filter((m) => m.message_index >= fromIndex);
+
+            if (filteredMessages.length > 0) {
+              // Convert DB messages to StreamJsonMessage format for client
+              const streamMessages = filteredMessages.map((m) => ({
+                type: m.role === "user" ? "user" as const :
+                      m.role === "assistant" ? "assistant" as const :
+                      m.role === "result" ? "result" as const : "system" as const,
+                message: {
+                  id: `msg-${m.id}`,
+                  role: m.role,
+                  content: m.content_blocks,
+                },
+              }));
+
+              ws.send(JSON.stringify({
+                type: "message",
+                messages: streamMessages,
+              }));
+            }
+
+            // Query diffs from DB
+            const dbDiffs = repo.getDiffs(data.sessionId);
+            if (dbDiffs.length > 0) {
+              ws.send(JSON.stringify({
+                type: "diff_update",
+                diffs: dbDiffs.map((d) => ({
+                  filename: d.filename || "unknown",
+                  diff_content: d.diff_content,
+                  additions: d.additions,
+                  deletions: d.deletions,
+                  is_session_relevant: d.is_session_relevant,
+                })),
+              }));
+            }
+          }
+
+          // Handle ping for spawned sessions
+          if (msg.type === "ping") {
+            ws.send(JSON.stringify({ type: "pong", timestamp: new Date().toISOString() }));
           }
           return;
         }

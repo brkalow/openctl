@@ -52,8 +52,8 @@ export class SessionRepository {
     // Initialize cached prepared statements
     this.stmts = {
       createSession: db.prepare(`
-        INSERT INTO sessions (id, title, description, claude_session_id, pr_url, share_token, project_path, model, harness, repo_url, status, last_activity_at, stream_token_hash, client_id, interactive)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO sessions (id, title, description, claude_session_id, pr_url, share_token, project_path, model, harness, repo_url, status, last_activity_at, stream_token_hash, client_id, interactive, remote)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING *
       `),
       getSession: db.prepare("SELECT * FROM sessions WHERE id = ?"),
@@ -198,14 +198,12 @@ export class SessionRepository {
       session.last_activity_at,
       null, // stream_token_hash deprecated, using client_id for auth
       clientId || null,
-      session.interactive ? 1 : 0
+      session.interactive ? 1 : 0,
+      session.remote ? 1 : 0
     ) as Record<string, unknown>;
 
     // Convert SQLite integers to booleans for the returned object
-    return {
-      ...result,
-      interactive: Boolean(result.interactive),
-    } as Session;
+    return this.normalizeSession(result);
   }
 
   // Create session with messages and diffs in a single transaction
@@ -232,7 +230,8 @@ export class SessionRepository {
         session.last_activity_at,
         null, // stream_token_hash not used for batch uploads
         clientId || null,
-        session.interactive ? 1 : 0
+        session.interactive ? 1 : 0,
+        session.remote ? 1 : 0
       ) as Record<string, unknown>;
 
       for (const msg of messages) {
@@ -259,10 +258,7 @@ export class SessionRepository {
       }
 
       // Convert SQLite integers to booleans
-      return {
-        ...created,
-        interactive: Boolean(created.interactive),
-      } as Session;
+      return this.normalizeSession(created);
     });
 
     return transaction();
@@ -389,6 +385,7 @@ export class SessionRepository {
     return {
       ...result,
       interactive: Boolean(result.interactive),
+      remote: Boolean(result.remote),
     } as Session;
   }
 
@@ -684,7 +681,8 @@ export class SessionRepository {
         session.last_activity_at,
         null, // stream_token_hash not used for batch uploads
         clientId || null,
-        session.interactive ? 1 : 0
+        session.interactive ? 1 : 0,
+        session.remote ? 1 : 0
       ) as Record<string, unknown>;
 
       // Insert messages
@@ -745,10 +743,7 @@ export class SessionRepository {
       }
 
       // Convert SQLite integers to booleans
-      return {
-        ...created,
-        interactive: Boolean(created.interactive),
-      } as Session;
+      return this.normalizeSession(created);
     });
 
     return transaction();
@@ -963,7 +958,7 @@ export class SessionRepository {
         diffs.push(...preservedDiffs);
       } else {
         // Create new session
-        resultSession = this.stmts.createSession.get(
+        const created = this.stmts.createSession.get(
           session.id,
           session.title,
           session.description,
@@ -978,8 +973,10 @@ export class SessionRepository {
           session.last_activity_at,
           null, // stream_token_hash not used for batch uploads
           clientId || null,
-          session.interactive ? 1 : 0
-        ) as Session;
+          session.interactive ? 1 : 0,
+          session.remote ? 1 : 0
+        ) as Record<string, unknown>;
+        resultSession = this.normalizeSession(created);
       }
 
       const sessionId = resultSession.id;

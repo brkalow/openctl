@@ -439,6 +439,40 @@ describe("Browser-Initiated Sessions Integration", () => {
       expect((pMsg as any).request_id).toBe("perm-123");
       expect((pMsg as any).allow).toBe(true);
     });
+
+    test("control response relays to daemon (SDK format)", async () => {
+      const clientId = connectDaemon();
+
+      const spawnRes = await fetch(`http://localhost:${serverPort}/api/sessions/spawn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: "Help me",
+          cwd: "/tmp/test",
+          permission_mode: "relay",
+        }),
+      });
+      const { session_id } = await spawnRes.json();
+
+      messagesToDaemon.length = 0;
+
+      daemonConnections.sendToDaemon(clientId, {
+        type: "control_response",
+        session_id,
+        request_id: "req-456",
+        response: {
+          subtype: "success",
+          request_id: "req-456",
+          response: { behavior: "allow" },
+        },
+      });
+
+      const cMsg = messagesToDaemon.find((m) => m.type === "control_response");
+      expect(cMsg).toBeDefined();
+      expect((cMsg as any).request_id).toBe("req-456");
+      expect((cMsg as any).response.subtype).toBe("success");
+      expect((cMsg as any).response.response.behavior).toBe("allow");
+    });
   });
 
   describe("Session Lifecycle", () => {
@@ -724,6 +758,311 @@ describe("Browser-Initiated Sessions Integration", () => {
       const data = await res.json();
 
       expect(data.active_spawned_sessions).toBe(1);
+    });
+  });
+
+  describe("Spawned Session DB Persistence", () => {
+    test("spawned session is created in database", async () => {
+      connectDaemon();
+
+      const spawnRes = await fetch(`http://localhost:${serverPort}/api/sessions/spawn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: "Help me build a feature",
+          cwd: "/tmp/test-project",
+          model: "claude-sonnet-4-20250514",
+        }),
+      });
+
+      const { session_id } = await spawnRes.json();
+
+      // Verify session exists in DB
+      const dbSession = repo.getSession(session_id);
+      expect(dbSession).toBeDefined();
+      expect(dbSession?.status).toBe("live");
+      expect(dbSession?.project_path).toBe("/tmp/test-project");
+      expect(dbSession?.harness).toBe("claude-code");
+      expect(dbSession?.model).toBe("claude-sonnet-4-20250514");
+      expect(dbSession?.interactive).toBe(true);
+      expect(dbSession?.title).toBe("Help me build a feature");
+    });
+
+    test("spawned session title is truncated for long prompts", async () => {
+      connectDaemon();
+
+      const longPrompt = "A".repeat(150);
+      const spawnRes = await fetch(`http://localhost:${serverPort}/api/sessions/spawn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: longPrompt,
+          cwd: "/tmp/test",
+        }),
+      });
+
+      const { session_id } = await spawnRes.json();
+      const dbSession = repo.getSession(session_id);
+
+      expect(dbSession?.title).toBe("A".repeat(100) + "...");
+    });
+
+    test("messages are stored in database", async () => {
+      connectDaemon();
+
+      const spawnRes = await fetch(`http://localhost:${serverPort}/api/sessions/spawn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "Test prompt", cwd: "/tmp/test" }),
+      });
+
+      const { session_id } = await spawnRes.json();
+
+      // Simulate message storage (normally done by server.ts when receiving session_output)
+      repo.addMessagesWithIndices(session_id, [
+        {
+          session_id,
+          role: "user",
+          content: "Test prompt",
+          content_blocks: [{ type: "text", text: "Test prompt" }],
+          timestamp: new Date().toISOString(),
+        },
+        {
+          session_id,
+          role: "assistant",
+          content: "I will help you with that.",
+          content_blocks: [{ type: "text", text: "I will help you with that." }],
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+
+      // Verify messages are in DB
+      const messages = repo.getMessages(session_id);
+      expect(messages.length).toBe(2);
+      expect(messages[0].role).toBe("user");
+      expect(messages[0].content).toBe("Test prompt");
+      expect(messages[1].role).toBe("assistant");
+      expect(messages[1].content).toBe("I will help you with that.");
+    });
+
+    test("diffs are stored in database", async () => {
+      connectDaemon();
+
+      const spawnRes = await fetch(`http://localhost:${serverPort}/api/sessions/spawn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "Add a feature", cwd: "/tmp/test" }),
+      });
+
+      const { session_id } = await spawnRes.json();
+
+      // Simulate diff storage (normally done by server.ts when receiving session_diff)
+      repo.addDiffs([
+        {
+          session_id,
+          filename: "src/feature.ts",
+          diff_content: `diff --git a/src/feature.ts b/src/feature.ts
++function newFeature() {
++  return "feature";
++}`,
+          diff_index: 0,
+          additions: 3,
+          deletions: 0,
+          is_session_relevant: true,
+        },
+      ]);
+
+      // Verify diffs are in DB
+      const diffs = repo.getDiffs(session_id);
+      expect(diffs.length).toBe(1);
+      expect(diffs[0].filename).toBe("src/feature.ts");
+      expect(diffs[0].additions).toBe(3);
+      expect(diffs[0].deletions).toBe(0);
+      expect(diffs[0].is_session_relevant).toBe(true);
+    });
+
+    test("session status is updated in database when session ends", async () => {
+      connectDaemon();
+
+      const spawnRes = await fetch(`http://localhost:${serverPort}/api/sessions/spawn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "Test", cwd: "/tmp/test" }),
+      });
+
+      const { session_id } = await spawnRes.json();
+
+      // Verify initial status
+      let dbSession = repo.getSession(session_id);
+      expect(dbSession?.status).toBe("live");
+
+      // Simulate session ending (normally done by server.ts when receiving session_ended)
+      repo.updateSession(session_id, { status: "complete" });
+
+      // Verify status changed
+      dbSession = repo.getSession(session_id);
+      expect(dbSession?.status).toBe("complete");
+    });
+
+    test("claude session ID is stored in database when session initializes", async () => {
+      connectDaemon();
+
+      const spawnRes = await fetch(`http://localhost:${serverPort}/api/sessions/spawn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "Test", cwd: "/tmp/test" }),
+      });
+
+      const { session_id } = await spawnRes.json();
+
+      // Initially no claude session ID
+      let dbSession = repo.getSession(session_id);
+      expect(dbSession?.claude_session_id).toBeNull();
+
+      // Simulate claude session init (normally done by server.ts when receiving system/init message)
+      repo.updateSession(session_id, { claude_session_id: "claude-abc-123" });
+
+      // Verify claude session ID is stored
+      dbSession = repo.getSession(session_id);
+      expect(dbSession?.claude_session_id).toBe("claude-abc-123");
+    });
+
+    test("messages persist through simulated refresh", async () => {
+      connectDaemon();
+
+      const spawnRes = await fetch(`http://localhost:${serverPort}/api/sessions/spawn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "Build a feature", cwd: "/tmp/test" }),
+      });
+
+      const { session_id } = await spawnRes.json();
+
+      // Add messages to DB
+      repo.addMessagesWithIndices(session_id, [
+        {
+          session_id,
+          role: "user",
+          content: "Build a feature",
+          content_blocks: [{ type: "text", text: "Build a feature" }],
+          timestamp: new Date().toISOString(),
+        },
+        {
+          session_id,
+          role: "assistant",
+          content: "Sure, let me help you build that feature.",
+          content_blocks: [{ type: "text", text: "Sure, let me help you build that feature." }],
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+
+      // Simulate browser refresh - create fresh query to DB (like subscribe handler does)
+      const messagesAfterRefresh = repo.getMessages(session_id);
+      expect(messagesAfterRefresh.length).toBe(2);
+      expect(messagesAfterRefresh[0].content).toBe("Build a feature");
+      expect(messagesAfterRefresh[1].content).toBe("Sure, let me help you build that feature.");
+
+      // Verify message indices are correct
+      expect(messagesAfterRefresh[0].message_index).toBe(0);
+      expect(messagesAfterRefresh[1].message_index).toBe(1);
+    });
+
+    test("diffs persist through simulated refresh", async () => {
+      connectDaemon();
+
+      const spawnRes = await fetch(`http://localhost:${serverPort}/api/sessions/spawn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "Add feature", cwd: "/tmp/test" }),
+      });
+
+      const { session_id } = await spawnRes.json();
+
+      // Add diffs to DB
+      repo.addDiffs([
+        {
+          session_id,
+          filename: "src/index.ts",
+          diff_content: "+new code",
+          diff_index: 0,
+          additions: 1,
+          deletions: 0,
+          is_session_relevant: true,
+        },
+        {
+          session_id,
+          filename: "src/utils.ts",
+          diff_content: "-old code\n+new code",
+          diff_index: 1,
+          additions: 1,
+          deletions: 1,
+          is_session_relevant: false,
+        },
+      ]);
+
+      // Simulate browser refresh - query diffs from DB (like subscribe handler does)
+      const diffsAfterRefresh = repo.getDiffs(session_id);
+      expect(diffsAfterRefresh.length).toBe(2);
+      expect(diffsAfterRefresh[0].filename).toBe("src/index.ts");
+      expect(diffsAfterRefresh[0].is_session_relevant).toBe(true);
+      expect(diffsAfterRefresh[1].filename).toBe("src/utils.ts");
+      expect(diffsAfterRefresh[1].is_session_relevant).toBe(false);
+    });
+
+    test("diffs are replaced on update (not appended)", async () => {
+      connectDaemon();
+
+      const spawnRes = await fetch(`http://localhost:${serverPort}/api/sessions/spawn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "Add feature", cwd: "/tmp/test" }),
+      });
+
+      const { session_id } = await spawnRes.json();
+
+      // Add initial diffs
+      repo.addDiffs([
+        {
+          session_id,
+          filename: "src/old.ts",
+          diff_content: "+old diff",
+          diff_index: 0,
+          additions: 1,
+          deletions: 0,
+          is_session_relevant: true,
+        },
+      ]);
+
+      expect(repo.getDiffs(session_id).length).toBe(1);
+
+      // Clear and add new diffs (like server.ts does)
+      repo.clearDiffs(session_id);
+      repo.addDiffs([
+        {
+          session_id,
+          filename: "src/new.ts",
+          diff_content: "+new diff",
+          diff_index: 0,
+          additions: 1,
+          deletions: 0,
+          is_session_relevant: true,
+        },
+        {
+          session_id,
+          filename: "src/another.ts",
+          diff_content: "+another",
+          diff_index: 1,
+          additions: 1,
+          deletions: 0,
+          is_session_relevant: true,
+        },
+      ]);
+
+      // Should have new diffs only
+      const diffs = repo.getDiffs(session_id);
+      expect(diffs.length).toBe(2);
+      expect(diffs[0].filename).toBe("src/new.ts");
+      expect(diffs[1].filename).toBe("src/another.ts");
     });
   });
 });

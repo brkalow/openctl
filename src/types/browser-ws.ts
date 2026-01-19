@@ -23,7 +23,15 @@ export type BrowserToServerMessage =
   | { type: "interrupt" }
   | { type: "end_session" }
   | { type: "question_response"; tool_use_id: string; answer: string }
-  | { type: "permission_response"; request_id: string; allow: boolean };
+  | { type: "permission_response"; request_id: string; allow: boolean }
+  // Control request response (SDK format)
+  | {
+      type: "control_response";
+      request_id: string;
+      allow: boolean;
+      message?: string; // Required when deny
+      updatedInput?: Record<string, unknown>; // Optional on allow
+    };
 
 // ============================================
 // Server -> Browser Messages
@@ -60,6 +68,16 @@ export type ServerToBrowserMessage =
       tool: string;
       description: string;
       details: Record<string, unknown>;
+    }
+  // Control request prompt (SDK format, relayed from daemon)
+  | {
+      type: "control_request";
+      request_id: string;
+      tool_name: string;
+      tool_use_id: string;
+      input: Record<string, unknown>;
+      decision_reason?: string;
+      blocked_path?: string;
     }
   // Connection status
   | { type: "daemon_disconnected"; session_id: string; message: string }

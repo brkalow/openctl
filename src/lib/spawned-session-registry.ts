@@ -1,8 +1,13 @@
 /**
  * Spawned Session Registry
  *
- * Tracks spawned sessions on the server (separate from archived sessions in DB).
- * These are sessions initiated via the browser that are actively running on a daemon.
+ * Tracks ephemeral state for spawned sessions (browser-initiated via daemon).
+ * Persistent data (messages, diffs) is stored in the database.
+ * This registry tracks:
+ * - Daemon connection info (for routing messages)
+ * - Runtime status (for quick lookup without DB query)
+ * - Permission requests and history
+ * - Recovery info for daemon reconnection
  */
 
 export type SpawnedSessionStatus =
@@ -33,6 +38,15 @@ export interface SessionRecoveryInfo {
   cwd: string;
   canResume: boolean;
   disconnectedAt: Date;
+}
+
+/** Parsed diff file for UI display (used for broadcast, stored in DB) */
+export interface ParsedDiff {
+  filename: string;
+  diff_content: string;
+  additions: number;
+  deletions: number;
+  is_session_relevant: boolean;
 }
 
 export interface SpawnedSessionRecord {
@@ -103,7 +117,7 @@ class SpawnedSessionRegistry {
   }
 
   /**
-   * Check if session is a spawned session (vs. daemon-streamed).
+   * Check if session is a spawned session (vs. plugin-based live session).
    */
   isSpawnedSession(sessionId: string): boolean {
     return this.sessions.has(sessionId);

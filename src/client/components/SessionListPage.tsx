@@ -154,7 +154,7 @@ function SessionCard({ session, isLive }: SessionCardProps) {
         </h3>
         <div className="flex items-center gap-1.5 shrink-0">
           {isLive && <LiveBadge />}
-          {session.interactive && <InteractiveBadge />}
+          {session.remote ? <RemoteBadge /> : session.interactive && <InteractiveBadge />}
           {session.pr_url && <PrBadge />}
         </div>
       </div>
@@ -192,6 +192,14 @@ function InteractiveBadge() {
         />
       </svg>
       Interactive
+    </span>
+  );
+}
+
+function RemoteBadge() {
+  return (
+    <span className="shrink-0 px-1.5 py-0.5 bg-purple-900/50 text-purple-300 text-xs font-medium rounded">
+      Remote
     </span>
   );
 }

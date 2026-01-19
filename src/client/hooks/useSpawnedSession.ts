@@ -28,12 +28,30 @@ export interface PermissionPrompt {
   details: Record<string, unknown>;
 }
 
+export interface ControlRequestPrompt {
+  requestId: string;
+  toolName: string;
+  toolUseId: string;
+  input: Record<string, unknown>;
+  decisionReason?: string;
+  blockedPath?: string;
+}
+
+export interface ParsedDiff {
+  filename: string;
+  diff_content: string;
+  additions: number;
+  deletions: number;
+  is_session_relevant: boolean;
+}
+
 interface UseSpawnedSessionOptions {
   sessionId: string;
   onMessage?: (messages: StreamMessage[]) => void;
   onStateChange?: (state: SessionState) => void;
   onQuestionPrompt?: (prompt: QuestionPrompt) => void;
   onPermissionPrompt?: (prompt: PermissionPrompt) => void;
+  onControlRequest?: (request: ControlRequestPrompt) => void;
 }
 
 export function useSpawnedSession({
@@ -42,10 +60,13 @@ export function useSpawnedSession({
   onStateChange,
   onQuestionPrompt,
   onPermissionPrompt,
+  onControlRequest,
 }: UseSpawnedSessionOptions) {
   const [state, setState] = useState<SessionState>("connecting");
   const [messages, setMessages] = useState<StreamMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [claudeSessionId, setClaudeSessionId] = useState<string | null>(null);
+  const [diffs, setDiffs] = useState<ParsedDiff[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -55,12 +76,14 @@ export function useSpawnedSession({
   const onStateChangeRef = useRef(onStateChange);
   const onQuestionPromptRef = useRef(onQuestionPrompt);
   const onPermissionPromptRef = useRef(onPermissionPrompt);
+  const onControlRequestRef = useRef(onControlRequest);
 
   useEffect(() => {
     onMessageRef.current = onMessage;
     onStateChangeRef.current = onStateChange;
     onQuestionPromptRef.current = onQuestionPrompt;
     onPermissionPromptRef.current = onPermissionPrompt;
+    onControlRequestRef.current = onControlRequest;
   });
 
   // Update state and notify
@@ -76,6 +99,25 @@ export function useSpawnedSession({
         case "connected":
           // Initial connection info
           reconnectAttemptsRef.current = 0;
+          // Capture claude session ID if present
+          if (data.claude_session_id && typeof data.claude_session_id === "string") {
+            setClaudeSessionId(data.claude_session_id);
+          }
+          // Set initial state from server status
+          if (data.status && typeof data.status === "string") {
+            const status = data.status as SessionState;
+            // Only update if it's a valid state we recognize
+            if (["starting", "running", "waiting", "ending", "ended", "failed", "disconnected"].includes(status)) {
+              updateState(status);
+            }
+          }
+          break;
+
+        case "session_init":
+          // Claude session initialized - capture the session ID
+          if (data.claude_session_id && typeof data.claude_session_id === "string") {
+            setClaudeSessionId(data.claude_session_id);
+          }
           break;
 
         case "message":
@@ -124,6 +166,17 @@ export function useSpawnedSession({
           });
           break;
 
+        case "control_request":
+          onControlRequestRef.current?.({
+            requestId: data.request_id as string,
+            toolName: data.tool_name as string,
+            toolUseId: data.tool_use_id as string,
+            input: data.input as Record<string, unknown>,
+            decisionReason: data.decision_reason as string | undefined,
+            blockedPath: data.blocked_path as string | undefined,
+          });
+          break;
+
         case "daemon_disconnected":
           updateState("disconnected");
           if (data.message && typeof data.message === "string") {
@@ -131,9 +184,17 @@ export function useSpawnedSession({
           }
           break;
 
+        case "diff_update":
+          // Update diffs when daemon sends them
+          if (data.diffs && Array.isArray(data.diffs)) {
+            setDiffs(data.diffs as ParsedDiff[]);
+          }
+          break;
+
         case "heartbeat":
         case "pong":
-          // Ignore heartbeats
+        case "ping":
+          // Ignore keepalive messages
           break;
 
         case "error":
@@ -283,6 +344,24 @@ export function useSpawnedSession({
     []
   );
 
+  // Respond to control request (SDK format)
+  const sendControlResponse = useCallback(
+    (requestId: string, allow: boolean, message?: string, updatedInput?: Record<string, unknown>) => {
+      if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+
+      wsRef.current.send(
+        JSON.stringify({
+          type: "control_response",
+          request_id: requestId,
+          allow,
+          message: allow ? undefined : (message || "User denied the action"),
+          updatedInput: allow ? updatedInput : undefined,
+        })
+      );
+    },
+    []
+  );
+
   // Connect on mount
   useEffect(() => {
     connect();
@@ -299,10 +378,13 @@ export function useSpawnedSession({
     state,
     messages,
     error,
+    claudeSessionId,
+    diffs,
     sendMessage,
     interrupt,
     endSession,
     answerQuestion,
     respondToPermission,
+    sendControlResponse,
   };
 }

@@ -187,8 +187,13 @@ export class DaemonWebSocket {
 
   send(message: DaemonToServerMessage): void {
     if (this.ws?.readyState !== WebSocket.OPEN) {
-      console.error("[daemon-ws] Cannot send, WebSocket not open");
+      console.error("[daemon-ws] Cannot send, WebSocket not open (state: " + this.ws?.readyState + ")");
       return;
+    }
+
+    // Log session_output messages for debugging
+    if (message.type === "session_output") {
+      console.log(`[daemon-ws] Sending session_output for ${message.session_id} (${message.messages.length} messages)`);
     }
 
     this.ws.send(JSON.stringify(message));

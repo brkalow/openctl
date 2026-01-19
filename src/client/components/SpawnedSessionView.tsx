@@ -3,13 +3,17 @@ import {
   useSpawnedSession,
   type QuestionPrompt,
   type PermissionPrompt,
+  type ControlRequestPrompt as ControlRequestPromptType,
   type StreamMessage,
+  type ParsedDiff,
 } from "../hooks/useSpawnedSession";
+import { ControlRequestPrompt } from "./ControlRequestPrompt";
 import { SessionHeader } from "./SessionHeader";
 import { SessionInput } from "./SessionInput";
 import { MessageBlock } from "./MessageBlock";
 import { QuestionModal } from "./QuestionModal";
 import { ConnectionLostBanner } from "./ConnectionLostBanner";
+import { DiffBlock } from "./DiffBlock";
 import { buildToolResultMap } from "../blocks";
 import { isNearBottom, scrollToBottom } from "../liveSession";
 import type { Message } from "../../db/schema";
@@ -19,6 +23,7 @@ interface SpawnedSessionViewProps {
   cwd: string;
   harness: string;
   model?: string;
+  createdAt?: string;
 }
 
 export function SpawnedSessionView({
@@ -26,15 +31,19 @@ export function SpawnedSessionView({
   cwd,
   harness,
   model,
+  createdAt,
 }: SpawnedSessionViewProps) {
   const [title, setTitle] = useState("New Session");
-  const [startTime] = useState(new Date());
+  // Use createdAt from server if available, otherwise fall back to now
+  const [startTime] = useState(() => createdAt ? new Date(createdAt) : new Date());
   const [duration, setDuration] = useState("0s");
   const [questionPrompt, setQuestionPrompt] = useState<QuestionPrompt | null>(
     null
   );
   const [permissionPrompt, setPermissionPrompt] =
     useState<PermissionPrompt | null>(null);
+  const [controlRequest, setControlRequest] =
+    useState<ControlRequestPromptType | null>(null);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const prevMessageCountRef = useRef(0);
@@ -44,15 +53,18 @@ export function SpawnedSessionView({
     state,
     messages,
     error,
+    diffs,
     sendMessage,
     interrupt,
     endSession,
     answerQuestion,
     respondToPermission,
+    sendControlResponse,
   } = useSpawnedSession({
     sessionId,
     onQuestionPrompt: setQuestionPrompt,
     onPermissionPrompt: setPermissionPrompt,
+    onControlRequest: setControlRequest,
   });
 
   // Update duration every second
@@ -66,25 +78,56 @@ export function SpawnedSessionView({
   }, [startTime]);
 
   // Convert StreamMessages to Message format for MessageBlock
+  // Filter out messages with no renderable content (system init, result without content, etc.)
   const convertedMessages: Message[] = useMemo(() => {
-    return messages.map((msg, index) => {
-      // Extract content blocks from the message
-      const contentBlocks = msg.message?.content || [];
+    return messages
+      .filter((msg) => {
+        // Keep user and assistant messages that have content
+        if (msg.type === "user" || msg.type === "assistant") {
+          const content = msg.message?.content;
+          // Check if there's actual content to render
+          if (Array.isArray(content) && content.length > 0) {
+            // Filter out user messages that only contain tool_result blocks
+            // (these are rendered inline with their corresponding tool_use blocks)
+            if (msg.type === "user" || msg.message?.role === "user") {
+              const hasNonToolResult = content.some(
+                (block: { type: string }) => block.type !== "tool_result"
+              );
+              if (!hasNonToolResult) {
+                return false;
+              }
+            }
+            return true;
+          }
+          // Also accept string content (shouldn't happen but be safe)
+          if (typeof content === "string" && content.length > 0) {
+            return true;
+          }
+          return false;
+        }
+        // Filter out system and result messages (they have no user-visible content)
+        return false;
+      })
+      .map((msg, index) => {
+        // Extract content blocks from the message
+        const contentBlocks = msg.message?.content || [];
 
-      return {
-        id: msg.message?.id || `msg-${index}`,
-        session_id: sessionId,
-        index,
-        role: (msg.message?.role || msg.type) as
-          | "assistant"
-          | "user"
-          | "system",
-        content_blocks: contentBlocks,
-        timestamp: new Date().toISOString(),
-        model: msg.message?.model,
-        usage: msg.message?.usage,
-      };
-    });
+        // Extract text content for the legacy content field
+        const textContent = contentBlocks
+          .filter((b): b is { type: "text"; text: string } => b.type === "text" && typeof b.text === "string")
+          .map((b) => b.text)
+          .join("\n");
+
+        return {
+          id: index, // Message.id is a number
+          session_id: sessionId,
+          message_index: index,
+          role: (msg.message?.role || msg.type) as string,
+          content: textContent, // Legacy field
+          content_blocks: contentBlocks,
+          timestamp: new Date().toISOString(),
+        };
+      });
   }, [messages, sessionId]);
 
   // Build tool result map for MessageBlock
@@ -172,6 +215,24 @@ export function SpawnedSessionView({
     [permissionPrompt, respondToPermission]
   );
 
+  // Handle control request response (SDK format)
+  const handleControlRequestAllow = useCallback(() => {
+    if (controlRequest) {
+      sendControlResponse(controlRequest.requestId, true);
+      setControlRequest(null);
+    }
+  }, [controlRequest, sendControlResponse]);
+
+  const handleControlRequestDeny = useCallback(
+    (message: string) => {
+      if (controlRequest) {
+        sendControlResponse(controlRequest.requestId, false, message);
+        setControlRequest(null);
+      }
+    },
+    [controlRequest, sendControlResponse]
+  );
+
   const showTypingIndicator = state === "running" || state === "starting";
 
   return (
@@ -196,7 +257,7 @@ export function SpawnedSessionView({
       {/* Main content area */}
       <div className="flex-1 overflow-hidden flex">
         {/* Message list */}
-        <div className="flex-1 overflow-hidden flex flex-col relative">
+        <div className={`${diffs.length > 0 ? "w-1/2" : "flex-1"} overflow-hidden flex flex-col relative`}>
           <div className="flex items-center justify-between mb-4 px-6 pt-4">
             <h2 className="text-sm font-semibold text-text-primary">
               Conversation
@@ -229,6 +290,15 @@ export function SpawnedSessionView({
               );
             })}
 
+            {/* Control request prompt (inline, SDK format) */}
+            {controlRequest && (
+              <ControlRequestPrompt
+                request={controlRequest}
+                onAllow={handleControlRequestAllow}
+                onDeny={handleControlRequestDeny}
+              />
+            )}
+
             {/* Typing indicator */}
             {showTypingIndicator && <TypingIndicator />}
           </div>
@@ -243,6 +313,13 @@ export function SpawnedSessionView({
             </button>
           )}
         </div>
+
+        {/* Diff panel - only show when there are diffs */}
+        {diffs.length > 0 && (
+          <div className="w-1/2 border-l border-bg-elevated overflow-hidden flex flex-col">
+            <SpawnedDiffPanel diffs={diffs} />
+          </div>
+        )}
       </div>
 
       {/* Input area */}
@@ -282,6 +359,82 @@ export function SpawnedSessionView({
 // ============================================================================
 // Helper Components
 // ============================================================================
+
+interface SpawnedDiffPanelProps {
+  diffs: ParsedDiff[];
+}
+
+function SpawnedDiffPanel({ diffs }: SpawnedDiffPanelProps) {
+  // Separate session-relevant diffs from other diffs
+  const sessionDiffs = diffs.filter((d) => d.is_session_relevant);
+  const otherDiffs = diffs.filter((d) => !d.is_session_relevant);
+
+  const isLargeDiff = (diff: ParsedDiff) =>
+    diff.additions + diff.deletions > 300;
+
+  return (
+    <div className="flex flex-col h-full bg-bg-secondary">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2 bg-bg-tertiary border-b border-bg-elevated shrink-0">
+        <h2 className="text-sm font-medium text-text-primary">Code Changes</h2>
+        <span className="text-xs text-text-muted">
+          {diffs.length} file{diffs.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+
+      {/* Diffs container */}
+      <div className="flex-1 overflow-y-auto">
+        {sessionDiffs.length > 0 && (
+          <div className="diff-group">
+            <div className="px-3 py-2 text-xs font-medium text-text-secondary bg-bg-tertiary/50 border-b border-bg-elevated sticky top-0 z-10">
+              Changed in this session ({sessionDiffs.length})
+            </div>
+            {sessionDiffs.map((diff, index) => (
+              <DiffBlock
+                key={`session-${index}`}
+                diffId={index}
+                filename={diff.filename}
+                diffContent={diff.diff_content}
+                additions={diff.additions}
+                deletions={diff.deletions}
+                annotations={[]}
+                reviewModel={null}
+                initiallyExpanded={!isLargeDiff(diff)}
+              />
+            ))}
+          </div>
+        )}
+
+        {otherDiffs.length > 0 && (
+          <div className="diff-group">
+            <div className="px-3 py-2 text-xs font-medium text-text-muted bg-bg-tertiary/50 border-b border-bg-elevated">
+              Other branch changes ({otherDiffs.length})
+            </div>
+            {otherDiffs.map((diff, index) => (
+              <DiffBlock
+                key={`other-${index}`}
+                diffId={1000 + index}
+                filename={diff.filename}
+                diffContent={diff.diff_content}
+                additions={diff.additions}
+                deletions={diff.deletions}
+                annotations={[]}
+                reviewModel={null}
+                initiallyExpanded={false}
+              />
+            ))}
+          </div>
+        )}
+
+        {diffs.length === 0 && (
+          <div className="px-3 py-6 text-center text-text-muted text-sm">
+            No code changes yet
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function TypingIndicator() {
   return (

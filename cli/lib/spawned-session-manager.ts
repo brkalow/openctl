@@ -8,6 +8,7 @@
  * - Sending user input via stdin
  * - Detecting AskUserQuestion tool calls
  * - Session lifecycle management
+ * - Diff capture and reporting
  */
 
 import { existsSync, statSync } from "fs";
@@ -15,8 +16,36 @@ import type {
   StartSessionMessage,
   StreamJsonMessage,
   DaemonToServerMessage,
+  ContentBlock,
+  PermissionResult,
 } from "../types/daemon-ws";
 import { notifySessionStarted } from "./notifications";
+import { captureGitDiff } from "./git";
+
+/** Debounce delay for diff capture (ms) */
+const DIFF_DEBOUNCE_MS = 2000;
+
+/** Tool names that modify files and should trigger diff capture */
+const FILE_MODIFYING_TOOLS = ["Write", "Edit", "NotebookEdit"];
+
+/**
+ * Git subcommands that can modify working tree state and should trigger diff capture.
+ * These commands may revert, reset, or change files in ways that affect the diff.
+ */
+const GIT_MODIFYING_SUBCOMMANDS = [
+  "checkout",
+  "reset",
+  "restore",
+  "stash",
+  "clean",
+  "revert",
+  "merge",
+  "rebase",
+  "pull",
+  "cherry-pick",
+  "am",
+  "apply",
+];
 
 /**
  * Permission request extracted from Claude's output when using --permission-prompt-tool stdio
@@ -28,6 +57,20 @@ interface PermissionRequest {
   command?: string;
   file_path?: string;
   content?: string;
+}
+
+/**
+ * Control request from Claude Code SDK format (control_request message type)
+ */
+interface ControlRequest {
+  request_id: string;
+  tool_name: string;
+  tool_use_id: string;
+  input: Record<string, unknown>;
+  permission_suggestions?: unknown[];
+  blocked_path?: string;
+  decision_reason?: string;
+  agent_id?: string;
 }
 
 // FileSink type from Bun - stdin when using "pipe"
@@ -48,9 +91,14 @@ interface SpawnedSession {
   pendingToolUseId?: string; // For AskUserQuestion relay
   pendingPermissionId?: string; // For permission relay
   permissionRequests: Map<string, PermissionRequest>; // Track permission requests by ID
+  controlRequests: Map<string, ControlRequest>; // Track SDK control requests by request_id
   outputBuffer: string; // Buffer for incomplete NDJSON lines
   outputHistory: StreamJsonMessage[]; // All messages for replay
   maxHistorySize: number;
+  // Files explicitly modified by this session (for filtering untracked files in diff)
+  modifiedFiles: Set<string>;
+  // Timer for debounced diff capture
+  diffDebounceTimer: ReturnType<typeof setTimeout> | null;
 }
 
 interface SessionInfo {
@@ -73,8 +121,14 @@ export class SpawnedSessionManager {
   }
 
   async startSession(request: StartSessionMessage): Promise<void> {
+    console.log(`[spawner] startSession called for ${request.session_id}`);
+
+    // Expand ~ in working directory path
+    const cwd = this.expandPath(request.cwd);
+
     // Validate working directory
-    if (!this.validateWorkingDirectory(request.cwd)) {
+    if (!this.validateWorkingDirectory(cwd)) {
+      console.error(`[spawner] Invalid working directory: ${request.cwd} (expanded: ${cwd})`);
       this.sendToServer({
         type: "session_ended",
         session_id: request.session_id,
@@ -89,7 +143,7 @@ export class SpawnedSessionManager {
     const args = this.buildClaudeArgs(request);
 
     console.log(
-      `[spawner] Starting session ${request.session_id} in ${request.cwd}`
+      `[spawner] Starting session ${request.session_id} in ${cwd}`
     );
     console.log(`[spawner] Command: claude ${args.join(" ")}`);
 
@@ -112,7 +166,7 @@ export class SpawnedSessionManager {
 
     try {
       const proc = Bun.spawn(["claude", ...args], {
-        cwd: request.cwd,
+        cwd,
         env: { ...process.env },
         stdin: "pipe",
         stdout: "pipe",
@@ -144,21 +198,29 @@ export class SpawnedSessionManager {
       const session: SpawnedSession = {
         id: request.session_id,
         proc,
-        cwd: request.cwd,
+        cwd,
         startedAt: new Date(),
         state: "starting",
         stdin, // Store FileSink directly
         permissionRequests: new Map(),
+        controlRequests: new Map(),
         outputBuffer: "",
         outputHistory: [],
         maxHistorySize: 1000,
+        modifiedFiles: new Set(),
+        diffDebounceTimer: null,
       };
 
       this.sessions.set(request.session_id, session);
 
+      console.log(`[spawner] Session ${request.session_id} process started, pid: ${proc.pid}`);
+
       // Stream stdout
       if (proc.stdout) {
+        console.log(`[spawner] Starting stdout stream for session ${request.session_id}`);
         this.streamOutput(session, proc.stdout);
+      } else {
+        console.error(`[spawner] No stdout available for session ${request.session_id}`);
       }
 
       // Log stderr (for debugging)
@@ -168,7 +230,38 @@ export class SpawnedSessionManager {
 
       // Handle process exit
       proc.exited.then((exitCode) => {
+        console.log(`[spawner] Process exited for session ${request.session_id}, code: ${exitCode}`);
         this.onSessionEnded(session, exitCode);
+      });
+
+      // Send the initial prompt via stdin (required for --input-format stream-json)
+      // Format matches Claude's stream-json input: {"type": "user", "message": {"role": "user", "content": "..."}}
+      console.log(`[spawner] Sending initial prompt to stdin for session ${request.session_id}`);
+      const initialMessage = JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: request.prompt,
+        },
+      });
+      stdin.write(initialMessage + "\n");
+      stdin.flush();
+      console.log(`[spawner] Initial prompt sent to session ${request.session_id}`);
+
+      // Echo the initial prompt to the server so it appears in the UI
+      const userMessage: StreamJsonMessage = {
+        type: "user",
+        message: {
+          id: `user-${Date.now()}`,
+          role: "user",
+          content: [{ type: "text", text: request.prompt }],
+        },
+      };
+      this.recordMessage(session, userMessage);
+      this.sendToServer({
+        type: "session_output",
+        session_id: request.session_id,
+        messages: [userMessage],
       });
 
       // Show desktop notification
@@ -176,7 +269,7 @@ export class SpawnedSessionManager {
         title: "Remote Session Started",
         message: "Claude session started",
         sessionId: request.session_id,
-        cwd: request.cwd,
+        cwd,
         prompt: request.prompt,
       });
     } catch (error) {
@@ -192,9 +285,9 @@ export class SpawnedSessionManager {
   }
 
   private buildClaudeArgs(request: StartSessionMessage): string[] {
+    // Note: We don't use -p with --input-format stream-json
+    // Instead, the prompt is sent via stdin as a JSON message
     const args = [
-      "-p",
-      request.prompt,
       "--output-format",
       "stream-json",
       "--input-format",
@@ -223,9 +316,24 @@ export class SpawnedSessionManager {
     return args;
   }
 
+  /**
+   * Expand ~ to home directory in path
+   */
+  private expandPath(path: string): string {
+    if (path.startsWith("~/")) {
+      const home = process.env.HOME || process.env.USERPROFILE || "";
+      return path.replace("~", home);
+    }
+    if (path === "~") {
+      return process.env.HOME || process.env.USERPROFILE || path;
+    }
+    return path;
+  }
+
   private validateWorkingDirectory(cwd: string): boolean {
     try {
-      return existsSync(cwd) && statSync(cwd).isDirectory();
+      const expanded = this.expandPath(cwd);
+      return existsSync(expanded) && statSync(expanded).isDirectory();
     } catch {
       return false;
     }
@@ -237,11 +345,37 @@ export class SpawnedSessionManager {
   ): Promise<void> {
     const reader = stdout.getReader();
     const decoder = new TextDecoder();
+    let chunkCount = 0;
+    let totalBytes = 0;
+
+    console.log(`[spawner] streamOutput started for session ${session.id}`);
+
+    // Set up a timeout to detect if we're not getting any output
+    let receivedFirstChunk = false;
+    const timeoutCheck = setTimeout(() => {
+      if (!receivedFirstChunk) {
+        console.warn(`[spawner] WARNING: No stdout received after 5s for session ${session.id}`);
+        console.warn(`[spawner] Process exit code: ${session.proc.exitCode}, killed: ${session.proc.killed}`);
+      }
+    }, 5000);
 
     try {
       while (true) {
+        console.log(`[spawner] Waiting for stdout chunk for session ${session.id}...`);
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          console.log(`[spawner] stdout stream ended for session ${session.id} (${chunkCount} chunks, ${totalBytes} bytes)`);
+          break;
+        }
+
+        chunkCount++;
+        totalBytes += value.length;
+
+        if (chunkCount === 1) {
+          receivedFirstChunk = true;
+          clearTimeout(timeoutCheck);
+          console.log(`[spawner] First stdout chunk received for session ${session.id} (${value.length} bytes)`);
+        }
 
         session.outputBuffer += decoder.decode(value, { stream: true });
         const lines = session.outputBuffer.split("\n");
@@ -256,17 +390,23 @@ export class SpawnedSessionManager {
             const msg = JSON.parse(line) as StreamJsonMessage;
             messages.push(msg);
 
+            // Log the first few messages for debugging
+            if (session.outputHistory.length < 5) {
+              console.log(`[spawner] Parsed message for ${session.id}:`, msg.type, msg.subtype || "");
+            }
+
             // Record message for history
             this.recordMessage(session, msg);
 
             // Process special messages
             this.processStreamMessage(session, msg);
           } catch (parseError) {
-            console.error(`[spawner] Failed to parse line:`, line, parseError);
+            console.error(`[spawner] Failed to parse line:`, line.substring(0, 200), parseError);
           }
         }
 
         if (messages.length > 0) {
+          console.log(`[spawner] Sending ${messages.length} messages to server for session ${session.id}`);
           this.sendToServer({
             type: "session_output",
             session_id: session.id,
@@ -275,7 +415,9 @@ export class SpawnedSessionManager {
         }
       }
     } catch (error) {
-      console.error(`[spawner] Error reading stdout:`, error);
+      console.error(`[spawner] Error reading stdout for session ${session.id}:`, error);
+    } finally {
+      clearTimeout(timeoutCheck);
     }
   }
 
@@ -311,6 +453,17 @@ export class SpawnedSessionManager {
       console.log(
         `[spawner] Session ${session.id} initialized, Claude session: ${msg.session_id}`
       );
+    }
+
+    // Detect SDK control_request messages (from --permission-prompt-tool stdio)
+    // These are top-level messages with type: "control_request"
+    if ((msg as Record<string, unknown>).type === "control_request") {
+      this.handleControlRequest(session, msg as unknown as {
+        type: "control_request";
+        request_id: string;
+        request: ControlRequest;
+      });
+      return;
     }
 
     // Detect permission requests (from --permission-prompt-tool stdio)
@@ -355,6 +508,9 @@ export class SpawnedSessionManager {
         }
       }
     }
+
+    // Check for file-modifying tool calls and schedule diff capture
+    this.checkForFileModifications(session, msg);
   }
 
   /**
@@ -470,6 +626,22 @@ export class SpawnedSessionManager {
       session.stdin.flush();
       session.state = "running";
       console.log(`[spawner] Sent input to session ${sessionId}`);
+
+      // Echo the user message back to the server so it appears in the UI
+      const userMessage: StreamJsonMessage = {
+        type: "user",
+        message: {
+          id: `user-${Date.now()}`,
+          role: "user",
+          content: [{ type: "text", text: content }],
+        },
+      };
+      this.recordMessage(session, userMessage);
+      this.sendToServer({
+        type: "session_output",
+        session_id: sessionId,
+        messages: [userMessage],
+      });
     } catch (error) {
       console.error(`[spawner] Failed to send input:`, error);
     }
@@ -515,6 +687,12 @@ export class SpawnedSessionManager {
     session.state = "ended";
 
     console.log(`[spawner] Session ${session.id} ended with code ${exitCode}`);
+
+    // Cancel any pending diff capture
+    if (session.diffDebounceTimer) {
+      clearTimeout(session.diffDebounceTimer);
+      session.diffDebounceTimer = null;
+    }
 
     this.sendToServer({
       type: "session_ended",
@@ -609,6 +787,96 @@ export class SpawnedSessionManager {
   }
 
   /**
+   * Handle control_request messages from Claude Code SDK.
+   * These are the new format for permission requests.
+   */
+  private handleControlRequest(
+    session: SpawnedSession,
+    msg: { type: "control_request"; request_id: string; request: ControlRequest }
+  ): void {
+    const { request_id, request } = msg;
+
+    const controlRequest: ControlRequest = {
+      request_id,
+      tool_name: request.tool_name,
+      tool_use_id: request.tool_use_id,
+      input: request.input,
+      permission_suggestions: request.permission_suggestions,
+      blocked_path: request.blocked_path,
+      decision_reason: request.decision_reason,
+      agent_id: request.agent_id,
+    };
+
+    session.controlRequests.set(request_id, controlRequest);
+
+    console.log(
+      `[spawner] Control request ${request_id} for tool ${request.tool_name}: ${request.decision_reason || "requires approval"}`
+    );
+
+    // Relay to server
+    this.sendToServer({
+      type: "control_request",
+      session_id: session.id,
+      request_id,
+      request: {
+        subtype: "can_use_tool",
+        tool_name: request.tool_name,
+        input: request.input,
+        tool_use_id: request.tool_use_id,
+        permission_suggestions: request.permission_suggestions,
+        blocked_path: request.blocked_path,
+        decision_reason: request.decision_reason,
+        agent_id: request.agent_id,
+      },
+    });
+  }
+
+  /**
+   * Respond to a control request.
+   * Sends the response to Claude's stdin in the SDK format.
+   */
+  async respondToControlRequest(
+    sessionId: string,
+    requestId: string,
+    result: PermissionResult
+  ): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session || !session.stdin) {
+      console.error(
+        `[spawner] Session not found for control response: ${sessionId}`
+      );
+      return;
+    }
+
+    const request = session.controlRequests.get(requestId);
+    if (!request) {
+      console.error(`[spawner] Control request not found: ${requestId}`);
+      return;
+    }
+
+    // Format the control response for Claude's stdin (exact SDK format)
+    const response = JSON.stringify({
+      type: "control_response",
+      response: {
+        subtype: "success",
+        request_id: requestId,
+        response: result,
+      },
+    }) + "\n";
+
+    try {
+      session.stdin.write(response);
+      session.stdin.flush();
+      session.controlRequests.delete(requestId);
+      console.log(
+        `[spawner] Sent control response for ${requestId}: ${result.behavior}`
+      );
+    } catch (error) {
+      console.error(`[spawner] Failed to send control response:`, error);
+    }
+  }
+
+  /**
    * Get a specific session by ID.
    */
   getSession(sessionId: string): SpawnedSession | undefined {
@@ -670,5 +938,148 @@ export class SpawnedSessionManager {
     if (!session) return [];
 
     return session.outputHistory.slice(fromIndex);
+  }
+
+  /**
+   * Check if a message contains file-modifying tool calls and track them.
+   * Schedules a debounced diff capture if modifications are detected.
+   */
+  private checkForFileModifications(
+    session: SpawnedSession,
+    msg: StreamJsonMessage
+  ): void {
+    if (msg.type !== "assistant" || !msg.message?.content) {
+      return;
+    }
+
+    let shouldCaptureDiff = false;
+
+    for (const block of msg.message.content) {
+      if (block.type !== "tool_use" || typeof block.name !== "string") {
+        continue;
+      }
+
+      // Check for file-modifying tools (Write, Edit, NotebookEdit)
+      if (FILE_MODIFYING_TOOLS.includes(block.name)) {
+        console.log(`[spawner] File-modifying tool detected: ${block.name}`);
+        shouldCaptureDiff = true;
+
+        // Extract file path from tool input
+        const filePath = this.extractFilePathFromToolUse(block);
+        if (filePath) {
+          session.modifiedFiles.add(filePath);
+          console.log(`[spawner] Tracked modified file: ${filePath}`);
+        }
+      }
+
+      // Check for Bash commands that might modify git working tree
+      if (block.name === "Bash") {
+        const input = block.input as Record<string, unknown> | undefined;
+        const command = input?.command;
+        if (typeof command === "string" && this.isGitModifyingCommand(command)) {
+          console.log(`[spawner] Git-modifying Bash command detected: ${command.slice(0, 100)}`);
+          shouldCaptureDiff = true;
+        }
+      }
+    }
+
+    if (shouldCaptureDiff) {
+      this.scheduleDiffCapture(session);
+    }
+  }
+
+  /**
+   * Check if a Bash command contains git subcommands that can modify working tree state.
+   */
+  private isGitModifyingCommand(command: string): boolean {
+    // Match git commands with modifying subcommands
+    // Handles: git checkout, git reset, etc.
+    // Also handles: git -C /path checkout, git --no-pager reset, etc.
+    for (const subcommand of GIT_MODIFYING_SUBCOMMANDS) {
+      // Look for "git" followed by optional flags/options, then the subcommand
+      // This regex handles:
+      // - git checkout
+      // - git -C /path checkout
+      // - git --no-pager checkout
+      // - command && git checkout
+      const pattern = new RegExp(`\\bgit\\b[^|;&]*\\b${subcommand}\\b`, "i");
+      if (pattern.test(command)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Extract file path from a file-modifying tool_use block.
+   */
+  private extractFilePathFromToolUse(block: ContentBlock): string | null {
+    const input = block.input as Record<string, unknown> | undefined;
+    if (!input || typeof input !== "object") {
+      return null;
+    }
+
+    // Write and Edit use file_path
+    if (typeof input.file_path === "string") {
+      return input.file_path;
+    }
+
+    // NotebookEdit uses notebook_path
+    if (typeof input.notebook_path === "string") {
+      return input.notebook_path;
+    }
+
+    return null;
+  }
+
+  /**
+   * Schedule a debounced diff capture.
+   * Cancels any pending capture and schedules a new one.
+   */
+  private scheduleDiffCapture(session: SpawnedSession): void {
+    // Cancel any pending capture
+    if (session.diffDebounceTimer) {
+      clearTimeout(session.diffDebounceTimer);
+    }
+
+    // Schedule new capture
+    session.diffDebounceTimer = setTimeout(async () => {
+      session.diffDebounceTimer = null;
+      await this.captureAndSendDiff(session);
+    }, DIFF_DEBOUNCE_MS);
+  }
+
+  /**
+   * Capture the current git diff and send it to the server.
+   * Only includes untracked files that the session has explicitly modified.
+   */
+  private async captureAndSendDiff(session: SpawnedSession): Promise<void> {
+    if (!session.cwd) {
+      console.log("[spawner] No cwd, skipping diff capture");
+      return;
+    }
+
+    try {
+      const diff = await captureGitDiff(session.cwd, {
+        allowedUntrackedFiles: session.modifiedFiles,
+      });
+
+      if (!diff) {
+        console.log("[spawner] No diff to capture (not a git repo or no changes)");
+        return;
+      }
+
+      console.log(`[spawner] Capturing diff (${diff.length} chars) for session ${session.id}`);
+
+      // Send diff to server
+      this.sendToServer({
+        type: "session_diff",
+        session_id: session.id,
+        diff,
+        modified_files: Array.from(session.modifiedFiles),
+      });
+    } catch (error) {
+      console.error(`[spawner] Failed to capture diff:`, error);
+    }
   }
 }

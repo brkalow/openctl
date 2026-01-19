@@ -231,7 +231,10 @@ function handleServerMessage(message: ServerToDaemonMessage): void {
   switch (message.type) {
     case "start_session":
       debug(`[daemon] Received start_session: ${message.session_id}`);
-      sessionManager.startSession(message);
+      console.log(`[daemon] Starting session ${message.session_id} in ${message.cwd}`);
+      sessionManager.startSession(message).catch((error) => {
+        console.error(`[daemon] Failed to start session ${message.session_id}:`, error);
+      });
       break;
 
     case "send_input":
@@ -264,6 +267,17 @@ function handleServerMessage(message: ServerToDaemonMessage): void {
         message.session_id,
         message.tool_use_id,
         message.answer
+      );
+      break;
+
+    case "control_response":
+      debug(`[daemon] Received control_response: ${message.session_id}`);
+      sessionManager.respondToControlRequest(
+        message.session_id,
+        message.request_id,
+        message.response.subtype === "success"
+          ? message.response.response
+          : { behavior: "deny", message: message.response.error }
       );
       break;
 

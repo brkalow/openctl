@@ -58,12 +58,66 @@ export interface QuestionPromptMessage {
   options?: string[];
 }
 
+// ============================================
+// Control Request/Response Types (SDK format)
+// Using types from @anthropic-ai/claude-agent-sdk
+// ============================================
+
+// Import and re-export PermissionResult from the SDK
+import type { PermissionResult as SDKPermissionResult } from "@anthropic-ai/claude-agent-sdk";
+export type PermissionResult = SDKPermissionResult;
+
+/** Control request from Claude Code (matches SDKControlRequest format) */
+export interface ControlRequestMessage {
+  type: "control_request";
+  session_id: string; // Added by daemon when relaying
+  request_id: string;
+  request: {
+    subtype: "can_use_tool";
+    tool_name: string;
+    input: Record<string, unknown>;
+    tool_use_id: string;
+    permission_suggestions?: unknown[];
+    blocked_path?: string;
+    decision_reason?: string;
+    agent_id?: string;
+  };
+}
+
+/** Control response to send back to Claude (matches SDKControlResponse format) */
+export interface ControlResponseMessage {
+  type: "control_response";
+  session_id: string;
+  request_id: string;
+  response:
+    | {
+        subtype: "success";
+        request_id: string;
+        response: PermissionResult;
+      }
+    | {
+        subtype: "error";
+        request_id: string;
+        error: string;
+      };
+}
+
+export interface SessionDiffMessage {
+  type: "session_diff";
+  session_id: string;
+  diff: string;
+  /** Files modified by the session (for relevance filtering) */
+  modified_files: string[];
+}
+
 export type DaemonToServerMessage =
   | DaemonConnectedMessage
   | SessionOutputMessage
   | SessionEndedMessage
   | PermissionPromptMessage
-  | QuestionPromptMessage;
+  | QuestionPromptMessage
+  | SessionDiffMessage
+  | ControlRequestMessage;
 
 // ============================================
 // Server -> Daemon Messages
@@ -116,7 +170,8 @@ export type ServerToDaemonMessage =
   | EndSessionMessage
   | InterruptSessionMessage
   | PermissionResponseMessage
-  | QuestionResponseMessage;
+  | QuestionResponseMessage
+  | ControlResponseMessage;
 
 // ============================================
 // Stream JSON types (from Claude Code output)

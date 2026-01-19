@@ -1249,7 +1249,25 @@ export function createApiRoutes(repo: SessionRepository) {
         // Generate session ID
         const sessionId = generateSpawnedSessionId();
 
-        // Create session record in registry (tracks spawned sessions)
+        // Create DB session for persistence (status: live, interactive: true, remote: true)
+        repo.createSession({
+          id: sessionId,
+          title: body.prompt.slice(0, 100) + (body.prompt.length > 100 ? "..." : ""),
+          description: null,
+          claude_session_id: null, // Will be updated when Claude initializes
+          pr_url: null,
+          share_token: null,
+          project_path: body.cwd,
+          model: body.model || null,
+          harness: harness,
+          repo_url: null,
+          status: "live",
+          last_activity_at: new Date().toISOString().replace("T", " ").slice(0, 19),
+          interactive: true,
+          remote: true,  // Mark as remote/spawned session
+        });
+
+        // Create ephemeral session record in registry (tracks daemon connection and permissions)
         spawnedSessionRegistry.createSession({
           id: sessionId,
           daemonClientId: daemon.clientId,

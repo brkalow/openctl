@@ -34,6 +34,7 @@ interface SessionInfoResponse {
   harness?: string;
   model?: string;
   title?: string;
+  created_at?: string;
 }
 
 // API helpers
@@ -186,6 +187,7 @@ function SessionDetailLoader() {
         cwd={sessionInfo.cwd || ''}
         harness={sessionInfo.harness || 'claude-code'}
         model={sessionInfo.model}
+        createdAt={sessionInfo.created_at}
       />
     );
   }
