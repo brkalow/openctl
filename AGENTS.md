@@ -34,6 +34,26 @@ The dev server defaults to port 3000 and automatically selects the next availabl
 - **Implementation plans**: Write to `plans/`, reference their spec file
 - **North star**: Consult `specs/north_star.md` for architectural decisions
 
+## Authentication
+
+The app uses Clerk for authentication with Google sign-in. See `specs/auth.md` for comprehensive documentation.
+
+**Key concepts:**
+- **Web auth**: Clerk-managed sessions with Bearer tokens
+- **CLI auth**: OAuth 2.0 with PKCE flow via `openctl auth login`
+- **Session ownership**: Dual model - sessions owned by `user_id` (authenticated) OR `client_id` (anonymous)
+- **Access control**: Owner access via user_id/client_id match, public access via share tokens, remote sessions publicly accessible
+
+**Environment variables** (see `.env.example`):
+- `PUBLIC_CLERK_PUBLISHABLE_KEY` - Client-side Clerk key (must have PUBLIC_ prefix)
+- `CLERK_SECRET_KEY` - Server-side Clerk key
+- `OAUTH_CLIENT_ID` / `OAUTH_DOMAIN` - CLI OAuth configuration
+
+**Auth middleware** (`src/middleware/auth.ts`):
+- `extractAuth(req)` - Extracts userId and clientId from request
+- `requireAuth(auth)` - Returns error response if not authenticated
+- `verifyOwnership(sessionId, userId, clientId)` - Checks session access
+
 ## Development Patterns
 
 ### Testing

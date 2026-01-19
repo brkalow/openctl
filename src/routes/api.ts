@@ -9,6 +9,7 @@ import { spawnSessionLimiter } from "../lib/rate-limiter";
 import { logSessionStarted } from "../lib/audit-log";
 import { getAdapterById, getFileModifyingToolsForAdapter, extractFilePathFromTool } from "../../cli/adapters";
 import type { AdapterUIConfig } from "../../cli/adapters";
+import { extractAuth, requireAuth, type AuthContext } from "../middleware/auth";
 
 // Helper to calculate content length from content blocks
 function calculateContentLength(contentBlocks: Array<{ type: string; text?: string }>): number {
@@ -125,14 +126,24 @@ export function createApiRoutes(repo: SessionRepository) {
 
   return {
     // Get all sessions or a specific session by claude_session_id
-    getSessions(req: Request): Response {
+    async getSessions(req: Request): Promise<Response> {
       const url = new URL(req.url);
       const claudeSessionId = url.searchParams.get("claude_session_id");
 
       // If claude_session_id is provided, return the specific session
+      // This path requires auth and verifies ownership
       if (claudeSessionId) {
+        const auth = await extractAuth(req);
+        const authError = requireAuth(auth);
+        if (authError) return authError;
+
         const session = repo.getSessionByClaudeSessionId(claudeSessionId);
         if (session) {
+          // Verify ownership
+          const { allowed } = repo.verifyOwnership(session.id, auth.userId, auth.clientId);
+          if (!allowed) {
+            return json({ session: null });
+          }
           return json({
             session,
             url: `/sessions/${session.id}`,
@@ -141,22 +152,34 @@ export function createApiRoutes(repo: SessionRepository) {
         return json({ session: null });
       }
 
-      const mine = url.searchParams.get("mine") === "true";
-      const clientId = getClientId(req);
+      // Require auth for listing sessions
+      const auth = await extractAuth(req);
+      const authError = requireAuth(auth);
+      if (authError) return authError;
 
-      // Use database-level filtering when filtering by client ID (more efficient)
-      const sessions = mine && clientId
-        ? repo.getSessionsByClientId(clientId)
-        : repo.getAllSessions();
-
+      // Always filter by owner (no more "all sessions" mode)
+      const sessions = repo.getSessionsByOwner(auth.userId ?? undefined, auth.clientId ?? undefined);
       return json({ sessions });
     },
 
     // Get session detail with messages and diffs
-    getSessionDetail(sessionId: string, baseUrl?: string): Response {
+    async getSessionDetail(req: Request, sessionId: string, baseUrl?: string): Promise<Response> {
       const session = repo.getSession(sessionId);
       if (!session) {
         return jsonError("Session not found", 404);
+      }
+
+      const auth = await extractAuth(req);
+
+      // Allow access if session is shared or remote (browser-spawned)
+      const isPubliclyAccessible = session.share_token || session.remote;
+
+      if (!isPubliclyAccessible) {
+        // Check ownership via repository (handles user_id OR client_id)
+        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (!allowed) {
+          return jsonError("Forbidden", 403);
+        }
       }
 
       const messages = repo.getMessages(sessionId);
@@ -177,14 +200,41 @@ export function createApiRoutes(repo: SessionRepository) {
         }
       }
 
-      return json({ session, messages, diffs, shareUrl, review, adapterUIConfig });
+      // For remote sessions not currently active in the spawned registry,
+      // mark as complete and not interactive (until remote session resuming is implemented)
+      let sessionData = session;
+      if (session.remote) {
+        const isActiveSpawned = spawnedSessionRegistry.getSession(sessionId) !== undefined;
+        if (!isActiveSpawned) {
+          sessionData = {
+            ...session,
+            status: "complete",
+            interactive: false,
+          };
+        }
+      }
+
+      return json({ session: sessionData, messages, diffs, shareUrl, review, adapterUIConfig });
     },
 
     // Get diffs for a session
-    getSessionDiffs(sessionId: string): Response {
+    async getSessionDiffs(req: Request, sessionId: string): Promise<Response> {
       const session = repo.getSession(sessionId);
       if (!session) {
         return jsonError("Session not found", 404);
+      }
+
+      const auth = await extractAuth(req);
+
+      // Allow access if session is shared or remote (browser-spawned)
+      const isPubliclyAccessible = session.share_token || session.remote;
+
+      if (!isPubliclyAccessible) {
+        // Check ownership via repository (handles user_id OR client_id)
+        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (!allowed) {
+          return jsonError("Forbidden", 403);
+        }
       }
 
       const diffs = repo.getDiffs(sessionId);
@@ -219,6 +269,9 @@ export function createApiRoutes(repo: SessionRepository) {
     // Create session
     async createSession(req: Request): Promise<Response> {
       try {
+        // Extract auth context to get userId if authenticated
+        const auth = await extractAuth(req);
+
         const formData = await req.formData();
 
         const title = formData.get("title") as string;
@@ -314,6 +367,7 @@ export function createApiRoutes(repo: SessionRepository) {
             title,
             description: (formData.get("description") as string) || null,
             claude_session_id: claudeSessionId,
+            agent_session_id: claudeSessionId,
             pr_url: prUrl || null,
             share_token: null,
             project_path: (formData.get("project_path") as string) || null,
@@ -322,11 +376,13 @@ export function createApiRoutes(repo: SessionRepository) {
             repo_url: (formData.get("repo_url") as string) || null,
             status: "archived",
             last_activity_at: null,
+            interactive: false,
           },
           messages,
           diffs,
           reviewData,
           clientId || undefined,
+          auth.userId || undefined,
           touchedFiles
         );
 
@@ -451,16 +507,21 @@ export function createApiRoutes(repo: SessionRepository) {
     },
 
     // Delete session
-    async deleteSession(sessionId: string, req: Request): Promise<Response> {
+    async deleteSession(req: Request, sessionId: string): Promise<Response> {
       const session = repo.getSession(sessionId);
       if (!session) {
         return jsonError("Session not found", 404);
       }
 
-      // Verify client ID ownership (don't require live status for delete)
-      const clientId = getClientId(req);
-      if (!repo.verifyClientOwnership(sessionId, clientId, false)) {
-        return jsonError("Permission denied - session owned by different client", 403);
+      const auth = await extractAuth(req);
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+
+      // Verify ownership (user_id OR client_id, or legacy session)
+      const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+
+      if (!allowed) {
+        return jsonError("Forbidden", 403);
       }
 
       const deleted = repo.deleteSession(sessionId);
@@ -478,12 +539,14 @@ export function createApiRoutes(repo: SessionRepository) {
           return jsonError("Session not found", 404);
         }
 
-        // Live sessions require client ID authorization
-        const clientId = getClientId(req);
-        if (session.status === "live") {
-          if (!repo.verifyClientOwnership(sessionId, clientId)) {
-            return jsonError("Session not found or unauthorized", 401);
-          }
+        const auth = await extractAuth(req);
+        const authError = requireAuth(auth);
+        if (authError) return authError;
+
+        // Verify ownership (user_id OR client_id, or legacy session)
+        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (!allowed) {
+          return jsonError("Forbidden", 403);
         }
 
         const body = await req.json();
@@ -510,10 +573,20 @@ export function createApiRoutes(repo: SessionRepository) {
     },
 
     // Create share link
-    shareSession(sessionId: string): Response {
+    async shareSession(req: Request, sessionId: string): Promise<Response> {
       const session = repo.getSession(sessionId);
       if (!session) {
         return jsonError("Session not found", 404);
+      }
+
+      const auth = await extractAuth(req);
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+
+      // Verify ownership (user_id OR client_id, or legacy session)
+      const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+      if (!allowed) {
+        return jsonError("Forbidden", 403);
       }
 
       if (session.share_token) {
@@ -527,10 +600,19 @@ export function createApiRoutes(repo: SessionRepository) {
     },
 
     // Get session as JSON (for export)
-    getSessionJson(sessionId: string): Response {
+    async getSessionJson(req: Request, sessionId: string): Promise<Response> {
       const session = repo.getSession(sessionId);
       if (!session) {
         return jsonError("Session not found", 404);
+      }
+
+      const auth = await extractAuth(req);
+
+      // Check ownership via repository (handles user_id OR client_id)
+      const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+
+      if (!allowed) {
+        return jsonError("Forbidden", 403);
       }
 
       const messages = repo.getMessages(sessionId);
@@ -686,18 +768,22 @@ export function createApiRoutes(repo: SessionRepository) {
         const sizeError = validateContentLength(req, MAX_JSON_PAYLOAD_BYTES);
         if (sizeError) return sizeError;
 
-        // Verify client ownership
-        const clientId = getClientId(req);
-        if (!repo.verifyClientOwnership(sessionId, clientId)) {
-          return jsonError("Session not found or unauthorized", 401);
-        }
-
         const session = repo.getSession(sessionId);
         if (!session) {
           return jsonError("Session not found", 404);
         }
         if (session.status !== "live") {
           return jsonError("Session is not live", 409);
+        }
+
+        const auth = await extractAuth(req);
+        const authError = requireAuth(auth);
+        if (authError) return authError;
+
+        // Verify ownership (user_id OR client_id, or legacy session)
+        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (!allowed) {
+          return jsonError("Forbidden", 403);
         }
 
         const body = await req.json();
@@ -738,7 +824,7 @@ export function createApiRoutes(repo: SessionRepository) {
           if (msg.role === "user") {
             const contentLength = calculateContentLength(msg.content_blocks as Array<{ type: string; text?: string }>);
             analytics.recordMessageSent(sessionId, {
-              clientId: clientId || undefined,
+              clientId: auth.clientId || undefined,
               contentLength,
             });
           }
@@ -746,11 +832,11 @@ export function createApiRoutes(repo: SessionRepository) {
           // Track assistant messages and tool invocations
           if (msg.role === "assistant") {
             analytics.recordAssistantMessage(sessionId, {
-              clientId: clientId || undefined,
+              clientId: auth.clientId || undefined,
             });
             if (msg.content_blocks) {
               analytics.recordToolsFromMessage(sessionId, msg.content_blocks as Array<{ type: string; name?: string }>, {
-                clientId: clientId || undefined,
+                clientId: auth.clientId || undefined,
               });
             }
           }
@@ -788,15 +874,19 @@ export function createApiRoutes(repo: SessionRepository) {
         const sizeError = validateContentLength(req, MAX_JSON_PAYLOAD_BYTES);
         if (sizeError) return sizeError;
 
-        // Verify client ownership
-        const clientId = getClientId(req);
-        if (!repo.verifyClientOwnership(sessionId, clientId)) {
-          return jsonError("Session not found or unauthorized", 401);
-        }
-
         const session = repo.getSession(sessionId);
         if (!session || session.status !== "live") {
           return jsonError("Session not found or not live", 404);
+        }
+
+        const auth = await extractAuth(req);
+        const authError = requireAuth(auth);
+        if (authError) return authError;
+
+        // Verify ownership (user_id OR client_id, or legacy session)
+        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (!allowed) {
+          return jsonError("Forbidden", 403);
         }
 
         const body = await req.json();
@@ -838,15 +928,19 @@ export function createApiRoutes(repo: SessionRepository) {
         const sizeError = validateContentLength(req, MAX_DIFF_PAYLOAD_BYTES);
         if (sizeError) return sizeError;
 
-        // Verify client ownership
-        const clientId = getClientId(req);
-        if (!repo.verifyClientOwnership(sessionId, clientId)) {
-          return jsonError("Session not found or unauthorized", 401);
-        }
-
         const session = repo.getSession(sessionId);
         if (!session || session.status !== "live") {
           return jsonError("Session not found or not live", 404);
+        }
+
+        const auth = await extractAuth(req);
+        const authError = requireAuth(auth);
+        if (authError) return authError;
+
+        // Verify ownership (user_id OR client_id, or legacy session)
+        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (!allowed) {
+          return jsonError("Forbidden", 403);
         }
 
         const diffContent = await req.text();
@@ -874,7 +968,7 @@ export function createApiRoutes(repo: SessionRepository) {
 
         // Record analytics for diff update
         if (fileStats.filesChanged > 0 || fileStats.additions > 0 || fileStats.deletions > 0) {
-          analytics.recordDiffUpdated(sessionId, fileStats, { clientId: clientId || undefined });
+          analytics.recordDiffUpdated(sessionId, fileStats, { clientId: auth.clientId || undefined });
         }
 
         return json({
@@ -891,15 +985,19 @@ export function createApiRoutes(repo: SessionRepository) {
     // Complete a live session
     async completeSession(req: Request, sessionId: string): Promise<Response> {
       try {
-        // Verify client ownership (don't require live status - session may have timed out)
-        const clientId = getClientId(req);
-        if (!repo.verifyClientOwnership(sessionId, clientId, false)) {
-          return jsonError("Session not found or unauthorized", 401);
-        }
-
         const session = repo.getSession(sessionId);
         if (!session) {
           return jsonError("Session not found", 404);
+        }
+
+        const auth = await extractAuth(req);
+        const authError = requireAuth(auth);
+        if (authError) return authError;
+
+        // Verify ownership (user_id OR client_id, or legacy session) - don't require live status as session may have timed out
+        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (!allowed) {
+          return jsonError("Forbidden", 403);
         }
 
         const body = await req.json().catch(() => ({}));
@@ -942,7 +1040,7 @@ export function createApiRoutes(repo: SessionRepository) {
 
         // Record analytics for session completion
         analytics.recordSessionCompleted(sessionId, {
-          clientId: clientId || undefined,
+          clientId: auth.clientId || undefined,
           durationSeconds,
           messageCount,
         });
@@ -961,15 +1059,19 @@ export function createApiRoutes(repo: SessionRepository) {
     // Mark a live session as interactive (enables browser feedback)
     async markInteractive(req: Request, sessionId: string): Promise<Response> {
       try {
-        // Verify client ownership
-        const clientId = getClientId(req);
-        if (!repo.verifyClientOwnership(sessionId, clientId)) {
-          return jsonError("Session not found or unauthorized", 401);
-        }
-
         const session = repo.getSession(sessionId);
         if (!session) {
           return jsonError("Session not found", 404);
+        }
+
+        const auth = await extractAuth(req);
+        const authError = requireAuth(auth);
+        if (authError) return authError;
+
+        // Verify ownership (user_id OR client_id, or legacy session)
+        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (!allowed) {
+          return jsonError("Forbidden", 403);
         }
 
         repo.setSessionInteractive(sessionId, true);
@@ -984,15 +1086,19 @@ export function createApiRoutes(repo: SessionRepository) {
     // Disable interactive mode for a session (called when daemon disconnects)
     async disableInteractive(req: Request, sessionId: string): Promise<Response> {
       try {
-        // Verify client ownership
-        const clientId = getClientId(req);
-        if (!repo.verifyClientOwnership(sessionId, clientId)) {
-          return jsonError("Session not found or unauthorized", 401);
-        }
-
         const session = repo.getSession(sessionId);
         if (!session) {
           return jsonError("Session not found", 404);
+        }
+
+        const auth = await extractAuth(req);
+        const authError = requireAuth(auth);
+        if (authError) return authError;
+
+        // Verify ownership (user_id OR client_id, or legacy session)
+        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (!allowed) {
+          return jsonError("Forbidden", 403);
         }
 
         repo.setSessionInteractive(sessionId, false);
@@ -1010,10 +1116,19 @@ export function createApiRoutes(repo: SessionRepository) {
     },
 
     // Get annotations for a session (for lazy loading in frontend)
-    getAnnotations(sessionId: string): Response {
+    async getAnnotations(req: Request, sessionId: string): Promise<Response> {
       const session = repo.getSession(sessionId);
       if (!session) {
         return jsonError("Session not found", 404);
+      }
+
+      const auth = await extractAuth(req);
+
+      // Check ownership via repository (handles user_id OR client_id)
+      const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+
+      if (!allowed) {
+        return jsonError("Forbidden", 403);
       }
 
       const review = repo.getReview(sessionId);
@@ -1030,16 +1145,24 @@ export function createApiRoutes(repo: SessionRepository) {
 
     /**
      * GET /api/stats
-     * Query params: period (today|week|month|all), mine (true to filter by client_id)
+     * Query params: period (today|week|month|all)
+     * Requires authentication, filters by user's client_id
      */
-    getStats(req: Request): Response {
+    async getStats(req: Request): Promise<Response> {
+      const auth = await extractAuth(req);
+
+      if (!auth.isAuthenticated) {
+        return jsonError("Unauthorized", 401);
+      }
+
       const url = new URL(req.url);
       const period = parsePeriod(url.searchParams.get("period"));
-      const mine = url.searchParams.get("mine") === "true";
-      const clientId = mine ? getClientId(req) : undefined;
+
+      // Always filter stats by the authenticated user's client_id
+      const clientId = auth.clientId ?? undefined;
 
       const { startDate, endDate } = getDateRange(period);
-      const summary = repo.getStatsSummary(startDate, endDate, clientId ?? undefined);
+      const summary = repo.getStatsSummary(startDate, endDate, clientId);
 
       return json({
         period,
@@ -1060,15 +1183,23 @@ export function createApiRoutes(repo: SessionRepository) {
 
     /**
      * GET /api/stats/timeseries
-     * Query params: stat, period, mine, fill
+     * Query params: stat, period, fill
+     * Requires authentication, filters by user's client_id
      */
-    getStatsTimeseries(req: Request): Response {
+    async getStatsTimeseries(req: Request): Promise<Response> {
+      const auth = await extractAuth(req);
+
+      if (!auth.isAuthenticated) {
+        return jsonError("Unauthorized", 401);
+      }
+
       const url = new URL(req.url);
       const statType = url.searchParams.get("stat");
       const period = parsePeriod(url.searchParams.get("period"));
-      const mine = url.searchParams.get("mine") === "true";
       const fill = url.searchParams.get("fill") === "true";
-      const clientId = mine ? getClientId(req) : undefined;
+
+      // Always filter stats by the authenticated user's client_id
+      const clientId = auth.clientId ?? undefined;
 
       if (!statType) {
         return jsonError("stat parameter is required", 400);
@@ -1092,7 +1223,7 @@ export function createApiRoutes(repo: SessionRepository) {
       }
 
       const { startDate, endDate } = getDateRange(period);
-      let data = repo.getStatTimeseries(statType as StatType, startDate, endDate, clientId ?? undefined);
+      let data = repo.getStatTimeseries(statType as StatType, startDate, endDate, clientId);
 
       // Optionally fill gaps for charting
       if (fill) {
@@ -1108,16 +1239,24 @@ export function createApiRoutes(repo: SessionRepository) {
 
     /**
      * GET /api/stats/tools
-     * Query params: period, mine
+     * Query params: period
+     * Requires authentication, filters by user's client_id
      */
-    getStatsTools(req: Request): Response {
+    async getStatsTools(req: Request): Promise<Response> {
+      const auth = await extractAuth(req);
+
+      if (!auth.isAuthenticated) {
+        return jsonError("Unauthorized", 401);
+      }
+
       const url = new URL(req.url);
       const period = parsePeriod(url.searchParams.get("period"));
-      const mine = url.searchParams.get("mine") === "true";
-      const clientId = mine ? getClientId(req) : undefined;
+
+      // Always filter stats by the authenticated user's client_id
+      const clientId = auth.clientId ?? undefined;
 
       const { startDate, endDate } = getDateRange(period);
-      const tools = repo.getToolStats(startDate, endDate, clientId ?? undefined);
+      const tools = repo.getToolStats(startDate, endDate, clientId);
 
       return json({
         period,
@@ -1128,20 +1267,28 @@ export function createApiRoutes(repo: SessionRepository) {
     /**
      * GET /api/stats/dashboard
      * Returns summary, tool breakdown, and sessions timeseries in one call
+     * Requires authentication, filters by user's client_id
      */
-    getDashboardStats(req: Request): Response {
+    async getDashboardStats(req: Request): Promise<Response> {
+      const auth = await extractAuth(req);
+
+      if (!auth.isAuthenticated) {
+        return jsonError("Unauthorized", 401);
+      }
+
       const url = new URL(req.url);
       const period = parsePeriod(url.searchParams.get("period"));
-      const mine = url.searchParams.get("mine") === "true";
-      const clientId = mine ? getClientId(req) : undefined;
+
+      // Always filter stats by the authenticated user's client_id
+      const clientId = auth.clientId ?? undefined;
 
       const { startDate, endDate } = getDateRange(period);
 
       // Fetch all data
-      const summary = repo.getStatsSummary(startDate, endDate, clientId ?? undefined);
-      const tools = repo.getToolStats(startDate, endDate, clientId ?? undefined);
+      const summary = repo.getStatsSummary(startDate, endDate, clientId);
+      const tools = repo.getToolStats(startDate, endDate, clientId);
       const sessionsTimeseries = fillTimeseriesGaps(
-        repo.getStatTimeseries("sessions_created", startDate, endDate, clientId ?? undefined),
+        repo.getStatTimeseries("sessions_created", startDate, endDate, clientId),
         startDate,
         endDate
       );
@@ -1168,13 +1315,78 @@ export function createApiRoutes(repo: SessionRepository) {
       });
     },
 
+    // === Auth & Session Claiming Endpoints ===
+
+    /**
+     * GET /auth/cli/callback
+     * OAuth callback endpoint for CLI authentication.
+     * Validates state and redirects to localhost with the authorization code.
+     */
+    handleCliAuthCallback(req: Request): Response {
+      const url = new URL(req.url);
+      const code = url.searchParams.get("code");
+      const state = url.searchParams.get("state");
+      const error = url.searchParams.get("error");
+      const errorDescription = url.searchParams.get("error_description");
+
+      // Handle OAuth errors
+      if (error) {
+        const errorMsg = errorDescription || error;
+        return new Response(getAuthErrorPage(errorMsg), {
+          status: 400,
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+
+      if (!code || !state) {
+        return new Response(getAuthErrorPage("Missing authorization code or state"), {
+          status: 400,
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+
+      // Parse state to get localhost port
+      // State format: base64url(JSON).signature
+      try {
+        const [encodedPayload] = state.split(".");
+        if (!encodedPayload) {
+          throw new Error("Invalid state format");
+        }
+
+        const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString());
+        const port = payload.port;
+
+        if (!port || typeof port !== "number") {
+          throw new Error("Invalid port in state");
+        }
+
+        // Redirect to localhost with the code
+        const redirectUrl = `http://localhost:${port}/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
+
+        return new Response(getAuthRedirectPage(redirectUrl), {
+          headers: { "Content-Type": "text/html" },
+        });
+      } catch (error) {
+        console.error("Failed to parse auth callback state:", error);
+        return new Response(getAuthErrorPage("Invalid authentication state"), {
+          status: 400,
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+    },
+
     // === Daemon Status Endpoints ===
 
     /**
      * GET /api/daemon/status
-     * Returns the status of connected daemons
+     * Returns the status of connected daemons.
+     * Requires authentication (user or client ID).
      */
-    getDaemonStatus(): Response {
+    async getDaemonStatus(req: Request): Promise<Response> {
+      const auth = await extractAuth(req);
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+
       // Import dynamically to avoid circular dependencies
       const { daemonConnections } = require("../lib/daemon-connections");
       const status = daemonConnections.getStatus();
@@ -1184,10 +1396,15 @@ export function createApiRoutes(repo: SessionRepository) {
     /**
      * GET /api/daemon/repos
      * Returns list of allowed repositories for spawning sessions.
+     * Requires authentication (user or client ID).
      * For v1, returns an empty list - the DirectoryPicker allows custom path entry.
      * Future: could be populated from daemon capabilities or user settings.
      */
-    getDaemonRepos(): Response {
+    async getDaemonRepos(req: Request): Promise<Response> {
+      const auth = await extractAuth(req);
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+
       // Placeholder implementation - could be enhanced based on:
       // 1. Hard-coded list from config
       // 2. Fetched from connected daemon
@@ -1199,9 +1416,14 @@ export function createApiRoutes(repo: SessionRepository) {
 
     /**
      * GET /api/daemon/list
-     * Returns all connected daemons (for multi-daemon scenarios)
+     * Returns all connected daemons (for multi-daemon scenarios).
+     * Requires authentication (user or client ID).
      */
-    listConnectedDaemons(): Response {
+    async listConnectedDaemons(req: Request): Promise<Response> {
+      const auth = await extractAuth(req);
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+
       const daemons = daemonConnections.getAllConnected().map((d: { clientId: string; connectedAt: Date; capabilities: unknown; activeSpawnedSessions: Set<string> }) => ({
         client_id: d.clientId,
         connected_at: d.connectedAt.toISOString(),
@@ -1217,12 +1439,19 @@ export function createApiRoutes(repo: SessionRepository) {
     /**
      * POST /api/sessions/spawn
      * Spawn a new session on a connected daemon.
+     * Requires authentication (user token or client ID).
      */
     async spawnSession(req: Request): Promise<Response> {
       try {
-        // Rate limit by client IP or client ID
-        const clientId = getClientId(req) || getClientIP(req);
-        const rateCheck = spawnSessionLimiter.check(`spawn:${clientId}`);
+        // Require either user auth or client ID
+        const auth = await extractAuth(req);
+        const clientId = getClientId(req);
+        const authError = requireAuth(auth);
+        if (authError) return authError;
+
+        // Rate limit by user ID or client ID
+        const rateLimitKey = auth.userId ? `spawn:user:${auth.userId}` : `spawn:client:${clientId}`;
+        const rateCheck = spawnSessionLimiter.check(rateLimitKey);
 
         if (!rateCheck.allowed) {
           return json({
@@ -1275,6 +1504,7 @@ export function createApiRoutes(repo: SessionRepository) {
         const sessionId = generateSpawnedSessionId();
 
         // Create DB session for persistence (status: live, interactive: true, remote: true)
+        // Pass user ID and client ID for ownership tracking
         repo.createSession({
           id: sessionId,
           title: body.prompt.slice(0, 100) + (body.prompt.length > 100 ? "..." : ""),
@@ -1290,7 +1520,7 @@ export function createApiRoutes(repo: SessionRepository) {
           last_activity_at: new Date().toISOString().replace("T", " ").slice(0, 19),
           interactive: true,
           remote: true,  // Mark as remote/spawned session
-        });
+        }, clientId || undefined, auth.userId || undefined);
 
         // Record analytics for spawned session creation
         analytics.recordSessionCreated(sessionId, {
@@ -1343,6 +1573,10 @@ export function createApiRoutes(repo: SessionRepository) {
           return jsonError("Failed to send to daemon", 500);
         }
 
+        // Update session with daemon's client_id for ownership tracking
+        // This allows the daemon to access the session it's running
+        repo.updateSession(sessionId, { client_id: daemon.clientId });
+
         return json({
           session_id: sessionId,
           status: "starting",
@@ -1355,10 +1589,40 @@ export function createApiRoutes(repo: SessionRepository) {
     },
 
     /**
+     * GET /api/sessions/unclaimed
+     * Get sessions that belong to the current client but haven't been claimed by a user.
+     * Requires both authentication (Bearer token) and client ID.
+     */
+    async getUnclaimedSessions(req: Request): Promise<Response> {
+      const auth = await extractAuth(req);
+
+      // Require both auth and client ID
+      if (!auth.isAuthenticated || !auth.clientId) {
+        return jsonError("Unauthorized - requires authentication and client ID", 401);
+      }
+
+      const sessions = repo.getUnclaimedSessions(auth.clientId);
+
+      return json({
+        count: sessions.length,
+        sessions: sessions.map(s => ({
+          id: s.id,
+          title: s.title,
+          created_at: s.created_at,
+        })),
+      });
+    },
+
+    /**
      * GET /api/sessions/spawned
      * List active spawned sessions.
+     * Requires authentication (user or client ID).
      */
-    getSpawnedSessions(): Response {
+    async getSpawnedSessions(req: Request): Promise<Response> {
+      const auth = await extractAuth(req);
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+
       const sessions = spawnedSessionRegistry.getActiveSessions();
 
       return json({
@@ -1375,14 +1639,39 @@ export function createApiRoutes(repo: SessionRepository) {
     },
 
     /**
+     * POST /api/sessions/claim
+     * Claim all unclaimed sessions for the current client, assigning them to the authenticated user.
+     * Requires both authentication (Bearer token) and client ID.
+     */
+    async claimSessions(req: Request): Promise<Response> {
+      const auth = await extractAuth(req);
+
+      // Require both auth and client ID
+      if (!auth.isAuthenticated || !auth.clientId || !auth.userId) {
+        return jsonError("Unauthorized - requires authentication and client ID", 401);
+      }
+
+      const claimed = repo.claimSessions(auth.clientId, auth.userId);
+
+      return json({ claimed });
+    },
+
+    /**
      * POST /api/sessions/:id/resume
      * Resume a disconnected session when daemon reconnects.
+     * Requires authentication (user token or client ID).
      */
     async resumeSession(sessionId: string, req: Request): Promise<Response> {
       try {
-        // Rate limit by client IP or client ID
-        const clientId = getClientId(req) || getClientIP(req) || "anonymous";
-        const rateCheck = spawnSessionLimiter.check(`resume:${clientId}`);
+        // Require either user auth or client ID
+        const auth = await extractAuth(req);
+        const clientId = getClientId(req);
+        const authError = requireAuth(auth);
+        if (authError) return authError;
+
+        // Rate limit by user ID or client ID
+        const rateLimitKey = auth.userId ? `resume:user:${auth.userId}` : `resume:client:${clientId}`;
+        const rateCheck = spawnSessionLimiter.check(rateLimitKey);
 
         if (!rateCheck.allowed) {
           return json({
@@ -1469,11 +1758,21 @@ export function createApiRoutes(repo: SessionRepository) {
     /**
      * GET /api/sessions/:id/info
      * Get session info for both spawned and archived sessions.
+     * Requires authentication (user token or client ID). Returns 403 if not authorized.
      */
-    getSessionInfo(sessionId: string): Response {
+    async getSessionInfo(sessionId: string, req: Request): Promise<Response> {
+      const auth = await extractAuth(req);
+      const clientId = getClientId(req);
+
+      // Require either user auth or client ID
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+
       // Check if it's a spawned session first
       const spawned = spawnedSessionRegistry.getSession(sessionId);
       if (spawned) {
+        // Spawned sessions are accessible with any client ID for now
+        // (they're browser-initiated and don't have traditional ownership)
         return json({
           id: spawned.id,
           type: "spawned",
@@ -1493,10 +1792,26 @@ export function createApiRoutes(repo: SessionRepository) {
       // Fall back to DB session
       const dbSession = repo.getSession(sessionId);
       if (dbSession) {
+        // Check if session is shared (has share_token) - allow public access
+        // Also allow access to remote sessions (browser-spawned) for any authenticated user
+        const isPubliclyAccessible = dbSession.share_token || dbSession.remote;
+
+        if (!isPubliclyAccessible) {
+          // Check ownership for non-shared, non-remote sessions
+          const { allowed } = repo.verifyOwnership(sessionId, auth.userId, clientId);
+          if (!allowed) {
+            return jsonError("Not authorized to access this session", 403);
+          }
+        }
+
+        // For remote sessions not in the spawned registry, mark as complete
+        // (until remote session resuming is implemented)
+        const effectiveStatus = dbSession.remote ? "complete" : dbSession.status;
+
         return json({
           id: dbSession.id,
           type: "archived",
-          status: dbSession.status,
+          status: effectiveStatus,
           title: dbSession.title,
           description: dbSession.description,
           project_path: dbSession.project_path,
@@ -1505,6 +1820,8 @@ export function createApiRoutes(repo: SessionRepository) {
           claude_session_id: dbSession.claude_session_id,
           created_at: dbSession.created_at,
           last_activity_at: dbSession.last_activity_at,
+          remote: dbSession.remote,
+          interactive: dbSession.remote ? false : dbSession.interactive,
         });
       }
 
@@ -1528,6 +1845,57 @@ export function createApiRoutes(repo: SessionRepository) {
       });
     },
   };
+}
+
+// Auth page HTML helpers
+function getAuthRedirectPage(redirectUrl: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <title>Redirecting...</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+    .container { background: white; border-radius: 12px; padding: 40px; max-width: 400px; margin: 0 auto; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    p { color: #666; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <p>Redirecting to CLI...</p>
+  </div>
+  <script>location.href = ${JSON.stringify(redirectUrl)};</script>
+</body>
+</html>`;
+}
+
+function getAuthErrorPage(message: string): string {
+  const escaped = message.replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[c] || c));
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <title>Authentication Failed</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+    .container { background: white; border-radius: 12px; padding: 40px; max-width: 400px; margin: 0 auto; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    h1 { color: #ef4444; margin-bottom: 16px; }
+    p { color: #666; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Authentication Failed</h1>
+    <p>${escaped}</p>
+    <p>Please return to the terminal and try again.</p>
+  </div>
+</body>
+</html>`;
 }
 
 // WebSocket connection management

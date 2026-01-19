@@ -641,27 +641,27 @@ const server = Bun.serve({
       GET: (req) => {
         const url = new URL(req.url);
         const baseUrl = `${url.protocol}//${url.host}`;
-        return api.getSessionDetail(req.params.id, baseUrl);
+        return api.getSessionDetail(req, req.params.id, baseUrl);
       },
       POST: (req) => api.updateSession(req, req.params.id),
       PATCH: (req) => api.patchSession(req, req.params.id),
-      DELETE: (req) => api.deleteSession(req.params.id, req),
+      DELETE: (req) => api.deleteSession(req, req.params.id),
     },
 
     "/api/sessions/:id/share": {
-      POST: (req) => api.shareSession(req.params.id),
+      POST: (req) => api.shareSession(req, req.params.id),
     },
 
     "/api/sessions/:id/export": {
-      GET: (req) => api.getSessionJson(req.params.id),
+      GET: (req) => api.getSessionJson(req, req.params.id),
     },
 
     "/api/sessions/:id/diffs": {
-      GET: (req) => api.getSessionDiffs(req.params.id),
+      GET: (req) => api.getSessionDiffs(req, req.params.id),
     },
 
     "/api/sessions/:id/annotations": {
-      GET: (req) => api.getAnnotations(req.params.id),
+      GET: (req) => api.getAnnotations(req, req.params.id),
     },
 
     "/api/s/:shareToken": {
@@ -721,6 +721,20 @@ const server = Bun.serve({
       POST: (req) => handleMarkFeedbackDelivered(req.params.id, req.params.messageId, repo),
     },
 
+    // Auth callback for CLI OAuth flow
+    "/auth/cli/callback": {
+      GET: (req) => api.handleCliAuthCallback(req),
+    },
+
+    // Session claiming endpoints (for authenticated users)
+    "/api/sessions/unclaimed": {
+      GET: (req) => api.getUnclaimedSessions(req),
+    },
+
+    "/api/sessions/claim": {
+      POST: (req) => api.claimSessions(req),
+    },
+
     // Analytics Stats endpoints
     "/api/stats": {
       GET: (req) => api.getStats(req),
@@ -740,15 +754,15 @@ const server = Bun.serve({
 
     // Daemon status endpoints
     "/api/daemon/status": {
-      GET: () => api.getDaemonStatus(),
+      GET: (req) => api.getDaemonStatus(req),
     },
 
     "/api/daemon/repos": {
-      GET: () => api.getDaemonRepos(),
+      GET: (req) => api.getDaemonRepos(req),
     },
 
     "/api/daemon/list": {
-      GET: () => api.listConnectedDaemons(),
+      GET: (req) => api.listConnectedDaemons(req),
     },
 
     // Spawned session endpoints
@@ -757,7 +771,7 @@ const server = Bun.serve({
     },
 
     "/api/sessions/spawned": {
-      GET: () => api.getSpawnedSessions(),
+      GET: (req) => api.getSpawnedSessions(req),
     },
 
     "/api/sessions/:id/resume": {
@@ -765,7 +779,7 @@ const server = Bun.serve({
     },
 
     "/api/sessions/:id/info": {
-      GET: (req) => api.getSessionInfo(req.params.id),
+      GET: (req) => api.getSessionInfo(req.params.id, req),
     },
 
     // Health check endpoint
