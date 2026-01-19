@@ -3,11 +3,19 @@ import { useState, useEffect } from "react";
 interface ConnectionLostBannerProps {
   sessionId: string;
   onEndSession: () => void;
+  canResume?: boolean;
+  daemonConnected?: boolean;
+  isResuming?: boolean;
+  onResume?: () => void;
 }
 
 export function ConnectionLostBanner({
   sessionId,
   onEndSession,
+  canResume = false,
+  daemonConnected = false,
+  isResuming = false,
+  onResume,
 }: ConnectionLostBannerProps) {
   const [secondsDisconnected, setSecondsDisconnected] = useState(0);
   const [showExtendedHelp, setShowExtendedHelp] = useState(false);
@@ -20,12 +28,54 @@ export function ConnectionLostBanner({
     return () => clearInterval(interval);
   }, []);
 
-  // Show extended help after 2 minutes
+  // Show extended help after 2 minutes (unless we can resume)
   useEffect(() => {
-    if (secondsDisconnected >= 120) {
+    if (secondsDisconnected >= 120 && !canResume) {
       setShowExtendedHelp(true);
     }
-  }, [secondsDisconnected]);
+  }, [secondsDisconnected, canResume]);
+
+  // Show resume UI when daemon reconnects and session can be resumed
+  const showResumeOption = canResume && daemonConnected;
+
+  // Show resume banner when daemon is back and session is resumable
+  if (showResumeOption) {
+    return (
+      <div className="bg-green-900/30 border-b border-green-800/50 px-4 py-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-green-200">
+            <svg
+              className="w-5 h-5 text-green-500"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
+              <path
+                fillRule="evenodd"
+                d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                clipRule="evenodd"
+              />
+            </svg>
+            <span>Daemon reconnected. Session can be resumed.</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onResume}
+              disabled={isResuming}
+              className="px-3 py-1.5 bg-green-700 hover:bg-green-600 disabled:bg-green-800 disabled:cursor-not-allowed text-white text-sm rounded font-medium transition-colors"
+            >
+              {isResuming ? "Resuming..." : "Resume Session"}
+            </button>
+            <button
+              onClick={onEndSession}
+              className="text-sm text-green-300 hover:text-white transition-colors"
+            >
+              End Session
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (showExtendedHelp) {
     return (
@@ -83,6 +133,11 @@ export function ConnectionLostBanner({
     );
   }
 
+  // Default: waiting for reconnection
+  const waitingMessage = canResume
+    ? "Waiting for daemon to reconnect..."
+    : "Reconnecting...";
+
   return (
     <div className="bg-amber-900/30 border-b border-amber-800/50 px-4 py-2">
       <div className="flex items-center justify-between">
@@ -100,7 +155,7 @@ export function ConnectionLostBanner({
           </svg>
           <span>Connection to daemon lost</span>
           <span className="text-amber-300/50">.</span>
-          <span className="text-amber-300/70">Reconnecting...</span>
+          <span className="text-amber-300/70">{waitingMessage}</span>
           <span className="text-amber-300/50 text-sm tabular-nums">
             ({secondsDisconnected}s)
           </span>

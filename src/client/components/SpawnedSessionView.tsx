@@ -54,12 +54,16 @@ export function SpawnedSessionView({
     messages,
     error,
     diffs,
+    canResume,
+    daemonConnected,
+    isResuming,
     sendMessage,
     interrupt,
     endSession,
     answerQuestion,
     respondToPermission,
     sendControlResponse,
+    resumeSession,
   } = useSpawnedSession({
     sessionId,
     onQuestionPrompt: setQuestionPrompt,
@@ -251,7 +255,14 @@ export function SpawnedSessionView({
 
       {/* Connection lost banner */}
       {state === "disconnected" && (
-        <ConnectionLostBanner sessionId={sessionId} onEndSession={endSession} />
+        <ConnectionLostBanner
+          sessionId={sessionId}
+          onEndSession={endSession}
+          canResume={canResume}
+          daemonConnected={daemonConnected}
+          isResuming={isResuming}
+          onResume={resumeSession}
+        />
       )}
 
       {/* Main content area */}

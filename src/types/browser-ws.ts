@@ -80,7 +80,14 @@ export type ServerToBrowserMessage =
       blocked_path?: string;
     }
   // Connection status
-  | { type: "daemon_disconnected"; session_id: string; message: string }
+  | {
+      type: "daemon_disconnected";
+      session_id: string;
+      message: string;
+      can_resume?: boolean;
+      claude_session_id?: string;
+    }
+  | { type: "daemon_reconnected"; session_id: string }
   | { type: "heartbeat"; timestamp: string }
   | { type: "pong"; timestamp: string }
   // Errors

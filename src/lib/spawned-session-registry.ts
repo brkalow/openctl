@@ -16,7 +16,8 @@ export type SpawnedSessionStatus =
   | "waiting"
   | "ending"
   | "ended"
-  | "failed";
+  | "failed"
+  | "disconnected";
 
 /**
  * A permission decision recorded during a session.

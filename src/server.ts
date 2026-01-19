@@ -683,6 +683,10 @@ const server = Bun.serve({
       GET: () => api.getSpawnedSessions(),
     },
 
+    "/api/sessions/:id/resume": {
+      POST: (req) => api.resumeSession(req.params.id, req),
+    },
+
     "/api/sessions/:id/info": {
       GET: (req) => api.getSessionInfo(req.params.id),
     },

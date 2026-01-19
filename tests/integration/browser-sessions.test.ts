@@ -78,6 +78,11 @@ describe("Browser-Initiated Sessions Integration", () => {
           return api.getSessionInfo(infoMatch[1]!);
         }
 
+        const resumeMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/resume$/);
+        if (resumeMatch && req.method === "POST") {
+          return api.resumeSession(resumeMatch[1]!, req);
+        }
+
         if (url.pathname === "/api/health" && req.method === "GET") {
           return api.getHealth();
         }
@@ -513,7 +518,7 @@ describe("Browser-Initiated Sessions Integration", () => {
       expect(session?.exitCode).toBe(0);
     });
 
-    test("daemon disconnect marks sessions as failed", async () => {
+    test("daemon disconnect marks sessions as disconnected with recovery info", async () => {
       const clientId = connectDaemon();
 
       const spawnRes = await fetch(`http://localhost:${serverPort}/api/sessions/spawn`, {
@@ -523,15 +528,23 @@ describe("Browser-Initiated Sessions Integration", () => {
       });
       const { session_id } = await spawnRes.json();
 
-      // Set to running
-      spawnedSessionRegistry.updateSession(session_id, { status: "running" });
+      // Set to running with a claude session ID (simulates normal operation)
+      spawnedSessionRegistry.updateSession(session_id, {
+        status: "running",
+        claudeSessionId: "claude-sess-123",
+      });
 
       // Disconnect daemon
       daemonConnections.removeDaemon(clientId);
 
       const session = spawnedSessionRegistry.getSession(session_id);
-      expect(session?.status).toBe("failed");
+      expect(session?.status).toBe("disconnected");
       expect(session?.error).toContain("disconnected");
+
+      // Recovery info should be preserved
+      const recoveryInfo = spawnedSessionRegistry.getRecoveryInfo(session_id);
+      expect(recoveryInfo?.canResume).toBe(true);
+      expect(recoveryInfo?.claudeSessionId).toBe("claude-sess-123");
     });
 
     test("recovery info can be stored", async () => {
@@ -551,6 +564,98 @@ describe("Browser-Initiated Sessions Integration", () => {
       expect(recoveryInfo).toBeDefined();
       expect(recoveryInfo?.claudeSessionId).toBe("claude-session-abc");
       expect(recoveryInfo?.canResume).toBe(true);
+    });
+
+    test("session can be resumed after daemon reconnects", async () => {
+      const clientId = connectDaemon();
+
+      // Create session
+      const spawnRes = await fetch(`http://localhost:${serverPort}/api/sessions/spawn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "Help me", cwd: "/tmp/test" }),
+      });
+      const { session_id } = await spawnRes.json();
+
+      // Set to running with claude session ID
+      spawnedSessionRegistry.updateSession(session_id, {
+        status: "running",
+        claudeSessionId: "claude-sess-resume-test",
+      });
+
+      // Disconnect daemon
+      daemonConnections.removeDaemon(clientId);
+
+      // Verify session is disconnected with recovery info
+      let session = spawnedSessionRegistry.getSession(session_id);
+      expect(session?.status).toBe("disconnected");
+      expect(session?.recoveryInfo?.canResume).toBe(true);
+
+      // Reconnect daemon
+      connectDaemon();
+
+      // Resume session
+      const resumeRes = await fetch(`http://localhost:${serverPort}/api/sessions/${session_id}/resume`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      expect(resumeRes.status).toBe(200);
+
+      const resumeData = await resumeRes.json();
+      expect(resumeData.session_id).toBe(session_id);
+      expect(resumeData.resumed).toBe(true);
+      expect(resumeData.claude_session_id).toBe("claude-sess-resume-test");
+
+      // Verify session state updated
+      session = spawnedSessionRegistry.getSession(session_id);
+      expect(session?.status).toBe("starting");
+    });
+
+    test("resume fails for non-disconnected sessions", async () => {
+      connectDaemon();
+
+      const spawnRes = await fetch(`http://localhost:${serverPort}/api/sessions/spawn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "Help me", cwd: "/tmp/test" }),
+      });
+      const { session_id } = await spawnRes.json();
+
+      // Try to resume while session is still starting (not disconnected)
+      const resumeRes = await fetch(`http://localhost:${serverPort}/api/sessions/${session_id}/resume`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      expect(resumeRes.status).toBe(400);
+      const data = await resumeRes.json();
+      expect(data.error).toContain("not disconnected");
+    });
+
+    test("resume fails without recovery info", async () => {
+      const clientId = connectDaemon();
+
+      const spawnRes = await fetch(`http://localhost:${serverPort}/api/sessions/spawn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "Help me", cwd: "/tmp/test" }),
+      });
+      const { session_id } = await spawnRes.json();
+
+      // Manually set to disconnected without recovery info (no claude session ID)
+      spawnedSessionRegistry.updateSession(session_id, {
+        status: "disconnected",
+      });
+
+      // Try to resume
+      const resumeRes = await fetch(`http://localhost:${serverPort}/api/sessions/${session_id}/resume`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      expect(resumeRes.status).toBe(400);
+      const data = await resumeRes.json();
+      expect(data.error).toContain("cannot be resumed");
     });
   });
 

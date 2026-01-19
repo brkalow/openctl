@@ -67,9 +67,13 @@ export function useSpawnedSession({
   const [error, setError] = useState<string | null>(null);
   const [claudeSessionId, setClaudeSessionId] = useState<string | null>(null);
   const [diffs, setDiffs] = useState<ParsedDiff[]>([]);
+  const [canResume, setCanResume] = useState(false);
+  const [daemonConnected, setDaemonConnected] = useState(true);
+  const [isResuming, setIsResuming] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
+  const daemonPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Store callbacks in refs to avoid reconnecting when callbacks change
   const onMessageRef = useRef(onMessage);
@@ -179,9 +183,20 @@ export function useSpawnedSession({
 
         case "daemon_disconnected":
           updateState("disconnected");
+          setDaemonConnected(false);
           if (data.message && typeof data.message === "string") {
             setError(data.message);
           }
+          if (data.can_resume === true) {
+            setCanResume(true);
+            if (data.claude_session_id && typeof data.claude_session_id === "string") {
+              setClaudeSessionId(data.claude_session_id);
+            }
+          }
+          break;
+
+        case "daemon_reconnected":
+          setDaemonConnected(true);
           break;
 
         case "diff_update":
@@ -207,6 +222,80 @@ export function useSpawnedSession({
     },
     [updateState]
   );
+
+  // Poll daemon status when disconnected
+  const startDaemonPolling = useCallback(() => {
+    if (daemonPollRef.current) return;
+
+    daemonPollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch("/api/daemon/status");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.connected) {
+            setDaemonConnected(true);
+          }
+        }
+      } catch (err) {
+        // Ignore poll errors
+      }
+    }, 3000);
+  }, []);
+
+  const stopDaemonPolling = useCallback(() => {
+    if (daemonPollRef.current) {
+      clearInterval(daemonPollRef.current);
+      daemonPollRef.current = null;
+    }
+  }, []);
+
+  // Resume session after daemon reconnects
+  const resumeSession = useCallback(async () => {
+    if (!canResume || !daemonConnected || isResuming) {
+      return { success: false, error: "Cannot resume session" };
+    }
+
+    setIsResuming(true);
+    setError(null);
+
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/resume`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        setError(data.error || "Failed to resume session");
+        setIsResuming(false);
+        return { success: false, error: data.error };
+      }
+
+      // Session is resuming - update state
+      updateState("starting");
+      setCanResume(false);
+      stopDaemonPolling();
+      setIsResuming(false);
+
+      return { success: true };
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Failed to resume session";
+      setError(errorMsg);
+      setIsResuming(false);
+      return { success: false, error: errorMsg };
+    }
+  }, [sessionId, canResume, daemonConnected, isResuming, updateState, stopDaemonPolling]);
+
+  // Start polling when disconnected and can resume
+  useEffect(() => {
+    if (state === "disconnected" && canResume) {
+      startDaemonPolling();
+    } else {
+      stopDaemonPolling();
+    }
+
+    return () => stopDaemonPolling();
+  }, [state, canResume, startDaemonPolling, stopDaemonPolling]);
 
   // Schedule reconnection with exponential backoff
   const scheduleReconnect = useCallback(() => {
@@ -380,11 +469,15 @@ export function useSpawnedSession({
     error,
     claudeSessionId,
     diffs,
+    canResume,
+    daemonConnected,
+    isResuming,
     sendMessage,
     interrupt,
     endSession,
     answerQuestion,
     respondToPermission,
     sendControlResponse,
+    resumeSession,
   };
 }

@@ -1338,6 +1338,98 @@ export function createApiRoutes(repo: SessionRepository) {
     },
 
     /**
+     * POST /api/sessions/:id/resume
+     * Resume a disconnected session when daemon reconnects.
+     */
+    async resumeSession(sessionId: string, req: Request): Promise<Response> {
+      try {
+        // Rate limit by client IP or client ID
+        const clientId = getClientId(req) || getClientIP(req);
+        const rateCheck = spawnSessionLimiter.check(`resume:${clientId}`);
+
+        if (!rateCheck.allowed) {
+          return json({
+            error: "Rate limit exceeded",
+            retry_after_ms: rateCheck.resetIn,
+          }, 429);
+        }
+
+        // Check daemon is connected
+        const daemon = daemonConnections.getAnyConnectedDaemon();
+        if (!daemon) {
+          return jsonError("No daemon connected", 503);
+        }
+
+        // Get session from registry
+        const session = spawnedSessionRegistry.getSession(sessionId);
+        if (!session) {
+          return jsonError("Session not found", 404);
+        }
+
+        // Validate session is in disconnected state
+        if (session.status !== "disconnected") {
+          return jsonError(`Session is not disconnected (status: ${session.status})`, 400);
+        }
+
+        // Check for recovery info
+        const recoveryInfo = spawnedSessionRegistry.getRecoveryInfo(sessionId);
+        if (!recoveryInfo || !recoveryInfo.canResume) {
+          return jsonError("Session cannot be resumed (no recovery info)", 400);
+        }
+
+        // Check concurrent session limit for this daemon
+        if (!daemonConnections.canAcceptSession(daemon.clientId)) {
+          return json({
+            error: "Maximum concurrent sessions reached",
+            max_sessions: daemonConnections.getMaxConcurrentSessions(),
+          }, 429);
+        }
+
+        // Update registry to point to new daemon
+        spawnedSessionRegistry.updateSession(sessionId, {
+          daemonClientId: daemon.clientId,
+          status: "starting",
+          error: undefined,
+        });
+
+        // Register session with new daemon connection
+        daemonConnections.registerSpawnedSession(daemon.clientId, sessionId);
+
+        console.log(`[api] Resuming session ${sessionId} with claude_session_id ${recoveryInfo.claudeSessionId}`);
+
+        // Send start_session to daemon with resume_session_id
+        const sent = daemonConnections.sendToDaemon(daemon.clientId, {
+          type: "start_session",
+          session_id: sessionId,
+          prompt: "", // Empty prompt when resuming - Claude continues from previous state
+          cwd: recoveryInfo.cwd,
+          harness: session.harness,
+          model: session.model,
+          resume_session_id: recoveryInfo.claudeSessionId,
+        });
+
+        if (!sent) {
+          spawnedSessionRegistry.updateSession(sessionId, {
+            status: "disconnected",
+            error: "Failed to send resume to daemon",
+          });
+          daemonConnections.unregisterSpawnedSession(daemon.clientId, sessionId);
+          return jsonError("Failed to send to daemon", 500);
+        }
+
+        return json({
+          session_id: sessionId,
+          status: "starting",
+          resumed: true,
+          claude_session_id: recoveryInfo.claudeSessionId,
+        });
+      } catch (error) {
+        console.error("Error resuming session:", error);
+        return jsonError("Failed to resume session", 500);
+      }
+    },
+
+    /**
      * GET /api/sessions/:id/info
      * Get session info for both spawned and archived sessions.
      */

@@ -65,23 +65,33 @@ class DaemonConnectionManager {
   removeDaemon(clientId: string): void {
     const daemon = this.daemons.get(clientId);
     if (daemon) {
-      // Mark all active spawned sessions as failed and notify browsers
+      // Mark all active spawned sessions as disconnected and preserve recovery info
       for (const sessionId of daemon.activeSpawnedSessions) {
         const session = spawnedSessionRegistry.getSession(sessionId);
         if (session && session.status !== "ended" && session.status !== "failed") {
+          // Check if we have a claude session ID for potential resume
+          const canResume = !!session.claudeSessionId;
+
+          if (canResume && session.claudeSessionId) {
+            // Preserve recovery info for potential resume
+            spawnedSessionRegistry.updateForRecovery(sessionId, session.claudeSessionId);
+          }
+
           spawnedSessionRegistry.updateSession(sessionId, {
-            status: "failed",
+            status: "disconnected",
             error: "Daemon disconnected",
           });
 
-          // Notify browser subscribers
+          // Notify browser subscribers with recovery info
           broadcastToSession(sessionId, {
             type: "daemon_disconnected",
             session_id: sessionId,
             message: "Connection to daemon lost",
+            can_resume: canResume,
+            claude_session_id: session.claudeSessionId,
           });
 
-          console.log(`[daemon-mgr] Session ${sessionId} marked failed due to daemon disconnect`);
+          console.log(`[daemon-mgr] Session ${sessionId} marked disconnected (can_resume=${canResume})`);
         }
       }
     }
