@@ -200,7 +200,21 @@ export function createApiRoutes(repo: SessionRepository) {
         }
       }
 
-      return json({ session, messages, diffs, shareUrl, review, adapterUIConfig });
+      // For remote sessions not currently active in the spawned registry,
+      // mark as complete and not interactive (until remote session resuming is implemented)
+      let sessionData = session;
+      if (session.remote) {
+        const isActiveSpawned = spawnedSessionRegistry.getSession(sessionId) !== undefined;
+        if (!isActiveSpawned) {
+          sessionData = {
+            ...session,
+            status: "complete",
+            interactive: false,
+          };
+        }
+      }
+
+      return json({ session: sessionData, messages, diffs, shareUrl, review, adapterUIConfig });
     },
 
     // Get diffs for a session
@@ -1783,10 +1797,14 @@ export function createApiRoutes(repo: SessionRepository) {
           }
         }
 
+        // For remote sessions not in the spawned registry, mark as complete
+        // (until remote session resuming is implemented)
+        const effectiveStatus = dbSession.remote ? "complete" : dbSession.status;
+
         return json({
           id: dbSession.id,
           type: "archived",
-          status: dbSession.status,
+          status: effectiveStatus,
           title: dbSession.title,
           description: dbSession.description,
           project_path: dbSession.project_path,
@@ -1795,6 +1813,8 @@ export function createApiRoutes(repo: SessionRepository) {
           claude_session_id: dbSession.claude_session_id,
           created_at: dbSession.created_at,
           last_activity_at: dbSession.last_activity_at,
+          remote: dbSession.remote,
+          interactive: dbSession.remote ? false : dbSession.interactive,
         });
       }
 
