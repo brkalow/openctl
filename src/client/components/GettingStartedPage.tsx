@@ -57,26 +57,26 @@ export function GettingStartedPage() {
           Commands
         </div>
         <div className="border border-bg-elevated rounded bg-bg-secondary/30 backdrop-blur divide-y divide-bg-elevated font-mono text-sm">
-          <div className="flex items-center justify-between px-5 py-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between px-5 py-3 gap-1 sm:gap-4">
             <span>
               <span className="text-text-primary">openctl</span>{' '}
               <span className="text-accent-primary">upload</span>
             </span>
-            <span className="text-text-muted">upload completed sessions</span>
+            <span className="text-text-muted text-xs sm:text-sm">upload completed sessions</span>
           </div>
-          <div className="flex items-center justify-between px-5 py-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between px-5 py-3 gap-1 sm:gap-4">
             <span>
               <span className="text-text-primary">openctl</span>{' '}
               <span className="text-accent-primary">share</span>
             </span>
-            <span className="text-text-muted">share live sessions</span>
+            <span className="text-text-muted text-xs sm:text-sm">share live sessions</span>
           </div>
-          <div className="flex items-center justify-between px-5 py-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between px-5 py-3 gap-1 sm:gap-4">
             <span>
               <span className="text-text-primary">openctl</span>{' '}
               <span className="text-accent-primary">list</span>
             </span>
-            <span className="text-text-muted">view all sessions</span>
+            <span className="text-text-muted text-xs sm:text-sm">view all sessions</span>
           </div>
         </div>
       </div>

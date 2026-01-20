@@ -280,11 +280,12 @@ function Header({ session, shareUrl, sessionStatus, connectionStatus, isLive, on
           <h1 className="text-2xl font-semibold text-text-primary">{stripSystemTags(session.title)}</h1>
         </div>
 
-        <div className="flex items-center gap-4 text-sm text-text-muted overflow-hidden">
+        {/* Metadata row - wraps on mobile */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-text-muted">
           {isLive && (
             <>
               <ConnectionStatusIndicator status={connectionStatus} />
-              <span className="text-text-muted/30">.</span>
+              <span className="text-text-muted/30 hidden sm:inline">.</span>
             </>
           )}
           {session.harness && (
@@ -293,7 +294,7 @@ function Header({ session, shareUrl, sessionStatus, connectionStatus, isLive, on
                 <HarnessIcon harness={session.harness} />
                 <span>{session.harness}</span>
               </span>
-              <span className="text-text-muted/30">.</span>
+              <span className="text-text-muted/30 hidden sm:inline">.</span>
             </>
           )}
           {session.model && (
@@ -302,21 +303,21 @@ function Header({ session, shareUrl, sessionStatus, connectionStatus, isLive, on
                 <ModelIcon model={session.model} />
                 <span>{session.model}</span>
               </span>
-              <span className="text-text-muted/30">.</span>
+              <span className="text-text-muted/30 hidden sm:inline">.</span>
             </>
           )}
           {session.project_path && (
             <>
-              <span className="font-mono text-[13px]" title={session.project_path}>
+              <span className="font-mono text-[13px] truncate max-w-[200px] sm:max-w-none" title={session.project_path}>
                 {truncatePath(session.project_path)}
               </span>
-              <span className="text-text-muted/30">.</span>
+              <span className="text-text-muted/30 hidden sm:inline">.</span>
             </>
           )}
           <span>{timeDisplay}</span>
           {session.pr_url && (
             <>
-              <span className="text-text-muted/30">.</span>
+              <span className="text-text-muted/30 hidden sm:inline">.</span>
               <a
                 href={session.pr_url}
                 target="_blank"
@@ -327,40 +328,44 @@ function Header({ session, shareUrl, sessionStatus, connectionStatus, isLive, on
               </a>
             </>
           )}
-          <span className="text-text-muted/30">.</span>
-          <div className="inline-flex items-center gap-1.5 min-w-0">
+        </div>
+
+        {/* Actions row - separate on mobile */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2 text-sm">
+          <div className="inline-flex items-center gap-1.5 min-w-0 max-w-full">
             <code className="text-[13px] font-mono text-accent-primary truncate">{resumeCommand}</code>
             <button
               title="Copy command"
-              className="p-1 text-text-muted hover:text-text-primary rounded transition-colors"
+              className="p-1 text-text-muted hover:text-text-primary rounded transition-colors shrink-0"
               onClick={() => onCopy(resumeCommand)}
             >
               <CopyIcon />
             </button>
           </div>
-          <div className="flex-1" />
-          {shareUrl ? (
-            <div className="flex items-center gap-2">
-              <code className="text-[13px] font-mono text-diff-add truncate">{shareUrl}</code>
-              <button
-                title="Copy URL"
-                className="p-1 text-text-muted hover:text-text-primary rounded transition-colors"
-                onClick={() => onCopy(shareUrl)}
-              >
-                <CopyIcon />
+          <div className="flex items-center gap-4 ml-auto">
+            {shareUrl ? (
+              <div className="flex items-center gap-2">
+                <code className="text-[13px] font-mono text-diff-add truncate max-w-[150px] sm:max-w-none">{shareUrl}</code>
+                <button
+                  title="Copy URL"
+                  className="p-1 text-text-muted hover:text-text-primary rounded transition-colors shrink-0"
+                  onClick={() => onCopy(shareUrl)}
+                >
+                  <CopyIcon />
+                </button>
+              </div>
+            ) : (
+              <button className="text-text-muted hover:text-text-primary transition-colors" onClick={onShare}>
+                Share
               </button>
-            </div>
-          ) : (
-            <button className="text-text-muted hover:text-text-primary transition-colors" onClick={onShare}>
-              Share
-            </button>
-          )}
-          <a
-            href={`/api/sessions/${encodeURIComponent(session.id)}/export`}
-            className="text-text-muted hover:text-text-primary transition-colors"
-          >
-            Export
-          </a>
+            )}
+            <a
+              href={`/api/sessions/${encodeURIComponent(session.id)}/export`}
+              className="text-text-muted hover:text-text-primary transition-colors"
+            >
+              Export
+            </a>
+          </div>
         </div>
       </div>
     </header>
@@ -440,7 +445,7 @@ function FeedbackInput({ onSubmit, claudeState, pendingCount }: FeedbackInputPro
       <div className="flex items-center w-[min(600px,calc(100vw-2rem))] bg-bg-secondary border border-bg-elevated rounded-md px-4 py-2 shadow-lg transition-all duration-200 focus-within:outline focus-within:outline-2 focus-within:outline-accent-primary focus-within:outline-offset-2">
         <textarea
           ref={textareaRef}
-          className="flex-1 bg-transparent text-text-primary text-[15px] leading-relaxed placeholder:text-text-muted resize-none border-none outline-none focus-visible:outline-none py-1 min-h-[24px] max-h-[150px]"
+          className="flex-1 bg-transparent text-text-primary text-base leading-relaxed placeholder:text-text-muted resize-none border-none outline-none focus-visible:outline-none py-1 min-h-[24px] max-h-[150px]"
           placeholder="Ask a question..."
           rows={1}
           value={value}

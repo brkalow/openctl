@@ -360,7 +360,7 @@ function DirectoryDropdown({ value, onChange, repos, disabled }: DirectoryDropdo
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleInputKeyDown}
                 placeholder="/path/to/directory"
-                className="flex-1 bg-transparent text-sm text-text-primary placeholder-text-muted outline-none font-mono"
+                className="flex-1 bg-transparent text-base sm:text-sm text-text-primary placeholder-text-muted outline-none font-mono"
               />
               {inputValue && (
                 <span className="text-[10px] text-text-muted px-1 py-0.5 bg-bg-tertiary rounded">
@@ -577,59 +577,65 @@ function NewSessionPrompt({ isFocused, onFocusChange }: NewSessionPromptProps) {
         }
       `}
     >
-      <div className="flex items-center gap-3 px-4 py-3">
-        {/* Plus icon */}
-        <div
-          className={`
-            w-6 h-6 rounded-md flex items-center justify-center transition-colors shrink-0
-            ${isFocused ? 'bg-accent-primary/20 text-accent-primary' : 'bg-bg-tertiary text-text-muted'}
-          `}
-        >
-          {isSubmitting ? (
-            <div className="w-4 h-4 border-2 border-accent-primary border-t-transparent rounded-full animate-spin" />
-          ) : (
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-          )}
+      <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center">
+        {/* Input row */}
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          {/* Plus icon */}
+          <div
+            className={`
+              w-6 h-6 rounded-md flex items-center justify-center transition-colors shrink-0
+              ${isFocused ? 'bg-accent-primary/20 text-accent-primary' : 'bg-bg-tertiary text-text-muted'}
+            `}
+          >
+            {isSubmitting ? (
+              <div className="w-4 h-4 border-2 border-accent-primary border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+            )}
+          </div>
+
+          {/* Input - text-base (16px) prevents iOS zoom */}
+          <input
+            ref={inputRef}
+            type="text"
+            placeholder="Start a new session..."
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onFocus={() => onFocusChange(true)}
+            onKeyDown={handleKeyDown}
+            disabled={isSubmitting}
+            className="flex-1 min-w-0 bg-transparent text-base sm:text-sm text-text-primary placeholder:text-text-muted disabled:opacity-50 outline-none"
+          />
         </div>
 
-        {/* Input */}
-        <input
-          ref={inputRef}
-          type="text"
-          placeholder="Start a new session..."
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onFocus={() => onFocusChange(true)}
-          onKeyDown={handleKeyDown}
-          disabled={isSubmitting}
-          className="flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-muted disabled:opacity-50 outline-none"
-        />
-
-        {/* Directory dropdown - inline */}
-        <DirectoryDropdown
-          value={cwd}
-          onChange={setCwd}
-          repos={allowedRepos}
-          disabled={isSubmitting}
-        />
-
-        {/* Start button or keyboard hint */}
-        {inputValue && cwd ? (
-          <button
-            type="button"
-            onClick={handleSubmit}
+        {/* Action row - directory + button */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Directory dropdown */}
+          <DirectoryDropdown
+            value={cwd}
+            onChange={setCwd}
+            repos={allowedRepos}
             disabled={isSubmitting}
-            className="px-3 py-1 bg-accent-primary text-bg-primary text-xs font-medium rounded-md hover:bg-accent-primary/90 transition-colors disabled:opacity-50"
-          >
-            {isSubmitting ? 'Starting...' : 'Start'}
-          </button>
-        ) : (
-          <kbd className="px-1.5 py-0.5 text-[10px] text-text-muted bg-bg-tertiary border border-bg-elevated rounded">
-            N
-          </kbd>
-        )}
+          />
+
+          {/* Start button or keyboard hint */}
+          {inputValue && cwd ? (
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={isSubmitting}
+              className="px-3 py-1 bg-accent-primary text-bg-primary text-xs font-medium rounded-md hover:bg-accent-primary/90 transition-colors disabled:opacity-50"
+            >
+              {isSubmitting ? 'Starting...' : 'Start'}
+            </button>
+          ) : (
+            <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] text-text-muted bg-bg-tertiary border border-bg-elevated rounded">
+              N
+            </kbd>
+          )}
+        </div>
       </div>
 
       {/* Expanded state - show options with smooth animation */}

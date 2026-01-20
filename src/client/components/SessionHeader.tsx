@@ -109,8 +109,8 @@ export function SessionHeader({
           )}
         </div>
 
-        {/* Bottom row: Metadata */}
-        <div className="flex items-center gap-3 text-sm text-text-muted overflow-hidden">
+        {/* Bottom row: Metadata - wraps on mobile */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-text-muted">
           {/* State indicator */}
           <span className="flex items-center gap-1.5">
             <span
@@ -128,14 +128,14 @@ export function SessionHeader({
               {indicator.label}
             </span>
           </span>
-          <span className="text-text-muted/30">.</span>
+          <span className="text-text-muted/30 hidden sm:inline">.</span>
 
           {/* Harness */}
           <span className="inline-flex items-center gap-1.5 text-text-secondary">
             <HarnessIcon harness={harness} />
             <span>{harness}</span>
           </span>
-          <span className="text-text-muted/30">.</span>
+          <span className="text-text-muted/30 hidden sm:inline">.</span>
 
           {/* Model */}
           {model && (
@@ -144,15 +144,15 @@ export function SessionHeader({
                 <ModelIcon model={model} />
                 <span>{model}</span>
               </span>
-              <span className="text-text-muted/30">.</span>
+              <span className="text-text-muted/30 hidden sm:inline">.</span>
             </>
           )}
 
           {/* Working directory */}
-          <span className="font-mono text-[13px]" title={cwd}>
+          <span className="font-mono text-[13px] truncate max-w-[200px] sm:max-w-none" title={cwd}>
             {truncatePath(cwd)}
           </span>
-          <span className="text-text-muted/30">.</span>
+          <span className="text-text-muted/30 hidden sm:inline">.</span>
 
           {/* Duration */}
           <span>{duration}</span>

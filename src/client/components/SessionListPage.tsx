@@ -35,17 +35,17 @@ export function SessionListPage({ sessions }: SessionListPageProps) {
 
   return (
     <div className="session-list-page max-w-[1400px] mx-auto px-6 lg:px-10 py-8">
-      <div className="flex items-center justify-between gap-6 mb-8">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <h1 className="text-xl font-semibold text-text-primary tracking-tight">Sessions</h1>
         <div className="flex items-center gap-4">
           <NewSessionButton />
-          <div className="w-full max-w-sm">
+          <div className="flex-1 sm:w-64 lg:w-80">
             <input
               type="search"
               placeholder="Search sessions..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-bg-secondary border border-bg-elevated rounded-md px-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline focus:outline-2 focus:outline-accent-primary focus:outline-offset-2 transition-all"
+              className="w-full bg-bg-secondary border border-bg-elevated rounded-md px-4 py-2.5 text-base sm:text-sm text-text-primary placeholder:text-text-muted focus:outline focus:outline-2 focus:outline-accent-primary focus:outline-offset-2 transition-all"
             />
           </div>
         </div>

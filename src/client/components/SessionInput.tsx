@@ -125,7 +125,7 @@ export function SessionInput({ state, onSend, className }: SessionInputProps) {
             disabled={isDisabled}
             placeholder={placeholder}
             rows={1}
-            className="flex-1 bg-transparent text-text-primary text-[15px] leading-relaxed placeholder:text-text-muted resize-none border-none outline-none focus-visible:outline-none py-1 min-h-[24px] max-h-[150px] disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 bg-transparent text-text-primary text-base leading-relaxed placeholder:text-text-muted resize-none border-none outline-none focus-visible:outline-none py-1 min-h-[24px] max-h-[150px] disabled:opacity-50 disabled:cursor-not-allowed"
           />
           <div className="flex items-center gap-2 ml-3">
             <kbd className="hidden sm:inline-flex text-[11px] text-text-muted font-mono px-2 py-1 bg-bg-tertiary rounded">
