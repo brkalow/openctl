@@ -14,11 +14,11 @@ const clerkClient = createClerkClient({
  * Get authorized parties for CSRF protection.
  * These are the domains allowed to make authenticated requests.
  */
-function getAuthorizedParties(req: Request): string[] {
+function getAuthorizedParties(): string[] {
   const parties = ['https://openctl.dev'];
   // Allow any in lower environments, might have multiple dev servers on different ports
   if (process.env.NODE_ENV !== 'production') {
-    return []
+    return [];
   }
   return parties;
 }
@@ -56,7 +56,7 @@ export async function extractAuth(req: Request): Promise<AuthContext> {
     try {
       const authState = await clerkClient.authenticateRequest(req, {
         acceptsToken: ['session_token', 'oauth_token'],
-        authorizedParties: getAuthorizedParties(req),
+        authorizedParties: getAuthorizedParties(),
       });
 
       userId = authState.isAuthenticated ? authState.toAuth().userId : null;

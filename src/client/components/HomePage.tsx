@@ -130,8 +130,12 @@ export function HomePage({ sessions }: HomePageProps) {
   // Handle "N" keyboard shortcut to focus new session input
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      // Don't trigger if user is typing in an input
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+      // Don't trigger if user is typing in an input or contenteditable
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        (e.target as HTMLElement).isContentEditable
+      ) {
         return;
       }
       if (e.key === 'n' || e.key === 'N') {
@@ -147,7 +151,8 @@ export function HomePage({ sessions }: HomePageProps) {
     <div className="min-h-screen bg-bg-primary">
       <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
         {/* New session prompt */}
-        <div className="mb-12">
+        <div className="mb-16">
+          <h2 className="text-2xl font-semibold text-text-primary tracking-tight mb-3">Ready to build...</h2>
           <NewSessionPrompt
             isFocused={isNewSessionFocused}
             onFocusChange={setIsNewSessionFocused}
@@ -227,6 +232,7 @@ function ViewModeToggle({ value, onChange }: ViewModeToggleProps) {
     <div className="flex items-center bg-bg-secondary rounded-lg p-0.5 border border-bg-elevated">
       <button
         onClick={() => onChange('project')}
+        aria-pressed={value === 'project'}
         className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
           value === 'project'
             ? 'bg-bg-tertiary text-text-primary'
@@ -237,6 +243,7 @@ function ViewModeToggle({ value, onChange }: ViewModeToggleProps) {
       </button>
       <button
         onClick={() => onChange('timeline')}
+        aria-pressed={value === 'timeline'}
         className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
           value === 'timeline'
             ? 'bg-bg-tertiary text-text-primary'
@@ -255,6 +262,173 @@ interface AllowedRepo {
   recent?: boolean;
 }
 
+// Helper to extract folder name from path
+function getFolderName(path: string): string {
+  if (!path) return '';
+  const parts = path.split('/').filter(Boolean);
+  return parts[parts.length - 1] || path;
+}
+
+interface DirectoryDropdownProps {
+  value: string;
+  onChange: (path: string) => void;
+  repos: AllowedRepo[];
+  disabled?: boolean;
+}
+
+function DirectoryDropdown({ value, onChange, repos, disabled }: DirectoryDropdownProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [inputValue, setInputValue] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const recentRepos = repos.filter(r => r.recent);
+  const otherRepos = repos.filter(r => !r.recent);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Focus input when dropdown opens
+  useEffect(() => {
+    if (isOpen && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [isOpen]);
+
+  const handleSelect = (path: string) => {
+    onChange(path);
+    setIsOpen(false);
+    setInputValue('');
+  };
+
+  const handleInputKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && inputValue.trim()) {
+      e.preventDefault();
+      handleSelect(inputValue.trim());
+    }
+    if (e.key === 'Escape') {
+      setIsOpen(false);
+    }
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      {/* Trigger button */}
+      <button
+        type="button"
+        onClick={() => !disabled && setIsOpen(!isOpen)}
+        disabled={disabled}
+        className={`
+          flex items-center gap-1.5 px-2 py-1 rounded-md text-xs transition-colors
+          border border-bg-elevated
+          ${value
+            ? 'bg-bg-tertiary text-text-primary'
+            : 'bg-bg-secondary text-text-muted'
+          }
+          ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-bg-tertiary hover:border-bg-hover'}
+        `}
+      >
+        <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+        </svg>
+        <span className="max-w-[120px] truncate">
+          {value ? getFolderName(value) : 'Select...'}
+        </span>
+        <svg className={`w-3 h-3 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {/* Dropdown */}
+      {isOpen && (
+        <div className="absolute right-0 top-full mt-1 z-20 w-72 bg-bg-tertiary border border-bg-elevated rounded-lg shadow-xl overflow-hidden">
+          {/* Custom path input */}
+          <div className="p-2 border-b border-bg-elevated">
+            <div className="flex items-center gap-2 px-2 py-1.5 bg-bg-secondary rounded-md border border-bg-elevated focus-within:border-accent-primary/50">
+              <input
+                ref={inputRef}
+                type="text"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={handleInputKeyDown}
+                placeholder="/path/to/directory"
+                className="flex-1 bg-transparent text-sm text-text-primary placeholder-text-muted outline-none font-mono"
+              />
+              {inputValue && (
+                <span className="text-[10px] text-text-muted px-1 py-0.5 bg-bg-tertiary rounded">
+                  Enter
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Repo list */}
+          <div className="max-h-48 overflow-auto">
+            {repos.length === 0 ? (
+              <div className="px-3 py-4 text-center text-xs text-text-muted">
+                No repositories configured
+              </div>
+            ) : (
+              <>
+                {recentRepos.length > 0 && (
+                  <>
+                    <div className="px-3 py-1.5 text-[10px] text-text-muted uppercase tracking-wide bg-bg-secondary/50">
+                      Recent
+                    </div>
+                    {recentRepos.map((repo) => (
+                      <button
+                        key={repo.path}
+                        type="button"
+                        onClick={() => handleSelect(repo.path)}
+                        className="w-full px-3 py-2 text-left hover:bg-bg-hover transition-colors flex items-center gap-2"
+                        title={repo.path}
+                      >
+                        <svg className="w-3.5 h-3.5 text-text-muted shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                        </svg>
+                        <span className="text-sm text-text-primary truncate">{getFolderName(repo.path)}</span>
+                      </button>
+                    ))}
+                  </>
+                )}
+                {otherRepos.length > 0 && (
+                  <>
+                    <div className="px-3 py-1.5 text-[10px] text-text-muted uppercase tracking-wide bg-bg-secondary/50 border-t border-bg-elevated">
+                      {recentRepos.length > 0 ? 'All Repositories' : 'Repositories'}
+                    </div>
+                    {otherRepos.map((repo) => (
+                      <button
+                        key={repo.path}
+                        type="button"
+                        onClick={() => handleSelect(repo.path)}
+                        className="w-full px-3 py-2 text-left hover:bg-bg-hover transition-colors flex items-center gap-2"
+                        title={repo.path}
+                      >
+                        <svg className="w-3.5 h-3.5 text-text-muted shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                        </svg>
+                        <span className="text-sm text-text-primary truncate">{getFolderName(repo.path)}</span>
+                      </button>
+                    ))}
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface NewSessionPromptProps {
   isFocused: boolean;
   onFocusChange: (focused: boolean) => void;
@@ -266,7 +440,6 @@ function NewSessionPrompt({ isFocused, onFocusChange }: NewSessionPromptProps) {
   const [cwd, setCwd] = useState('');
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('relay');
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showDirectoryPicker, setShowDirectoryPicker] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [allowedRepos, setAllowedRepos] = useState<AllowedRepo[]>([]);
@@ -285,21 +458,23 @@ function NewSessionPrompt({ isFocused, onFocusChange }: NewSessionPromptProps) {
     }
   }, [isFocused]);
 
-  // Fetch allowed repos when expanded
+  // Fetch allowed repos on mount when daemon is connected
   useEffect(() => {
-    if (isFocused && isDaemonConnected) {
+    if (isDaemonConnected) {
       fetch('/api/daemon/repos')
         .then(res => res.ok ? res.json() : { repos: [] })
         .then(data => setAllowedRepos(data.repos || []))
-        .catch(() => setAllowedRepos([]));
+        .catch((err) => {
+          console.warn('Failed to fetch repos:', err);
+          setAllowedRepos([]);
+        });
     }
-  }, [isFocused, isDaemonConnected]);
+  }, [isDaemonConnected]);
 
-  // Close expanded state and directory picker when clicking outside
+  // Close expanded state when clicking outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setShowDirectoryPicker(false);
         onFocusChange(false);
       }
     }
@@ -351,14 +526,6 @@ function NewSessionPrompt({ isFocused, onFocusChange }: NewSessionPromptProps) {
       handleSubmit();
     }
   }, [inputValue, cwd, handleSubmit]);
-
-  const selectDirectory = (path: string) => {
-    setCwd(path);
-    setShowDirectoryPicker(false);
-  };
-
-  const recentRepos = allowedRepos.filter(r => r.recent);
-  const otherRepos = allowedRepos.filter(r => !r.recent);
 
   // Show daemon instructions when not connected
   if (!isDaemonConnected) {
@@ -437,11 +604,19 @@ function NewSessionPrompt({ isFocused, onFocusChange }: NewSessionPromptProps) {
           onFocus={() => onFocusChange(true)}
           onKeyDown={handleKeyDown}
           disabled={isSubmitting}
-          className="flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none disabled:opacity-50"
+          className="flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-muted disabled:opacity-50 outline-none"
         />
 
-        {/* Keyboard hint or submit button */}
-        {isFocused && inputValue && cwd ? (
+        {/* Directory dropdown - inline */}
+        <DirectoryDropdown
+          value={cwd}
+          onChange={setCwd}
+          repos={allowedRepos}
+          disabled={isSubmitting}
+        />
+
+        {/* Start button or keyboard hint */}
+        {inputValue && cwd ? (
           <button
             type="button"
             onClick={handleSubmit}
@@ -457,78 +632,20 @@ function NewSessionPrompt({ isFocused, onFocusChange }: NewSessionPromptProps) {
         )}
       </div>
 
-      {/* Expanded state - show options */}
-      {isFocused && (
-        <div className="px-4 pb-4 pt-3 border-t border-bg-elevated/50 space-y-3">
+      {/* Expanded state - show options with smooth animation */}
+      <div
+        className={`grid transition-all duration-300 ease-out ${
+          isFocused ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+        }`}
+      >
+        <div className="overflow-hidden">
+          <div className="px-4 pb-4 pt-3 border-t border-bg-elevated/50 space-y-3">
           {/* Error message */}
           {error && (
             <div className="p-3 bg-diff-del/20 border border-diff-del/30 rounded-md text-diff-del text-sm">
               {error}
             </div>
           )}
-
-          {/* Directory input - inline */}
-          <div className="relative">
-            <div className="flex items-center gap-3">
-              <label className="text-xs text-text-muted whitespace-nowrap flex items-center gap-1.5">
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                </svg>
-                Directory
-              </label>
-              <input
-                type="text"
-                value={cwd}
-                onChange={(e) => setCwd(e.target.value)}
-                onFocus={() => setShowDirectoryPicker(true)}
-                placeholder="/path/to/project"
-                className="flex-1 px-2 py-1 bg-transparent border-b border-bg-elevated text-sm text-text-primary placeholder-text-muted font-mono"
-                style={{ outline: 'none' }}
-              />
-            </div>
-
-            {/* Directory suggestions dropdown */}
-            {showDirectoryPicker && allowedRepos.length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-1 z-10 bg-bg-tertiary border border-bg-elevated rounded-md shadow-lg max-h-48 overflow-auto">
-                {recentRepos.length > 0 && (
-                  <>
-                    <div className="px-3 py-2 text-xs text-text-muted uppercase tracking-wide bg-bg-secondary/50">
-                      Recent
-                    </div>
-                    {recentRepos.map((repo) => (
-                      <button
-                        key={repo.path}
-                        type="button"
-                        onClick={() => selectDirectory(repo.path)}
-                        className="w-full px-3 py-2.5 text-left text-text-primary hover:bg-bg-hover transition-colors font-mono text-sm"
-                      >
-                        {repo.path}
-                      </button>
-                    ))}
-                  </>
-                )}
-                {otherRepos.length > 0 && (
-                  <>
-                    {recentRepos.length > 0 && (
-                      <div className="px-3 py-2 text-xs text-text-muted uppercase tracking-wide bg-bg-secondary/50 border-t border-bg-elevated">
-                        All repositories
-                      </div>
-                    )}
-                    {otherRepos.map((repo) => (
-                      <button
-                        key={repo.path}
-                        type="button"
-                        onClick={() => selectDirectory(repo.path)}
-                        className="w-full px-3 py-2.5 text-left text-text-primary hover:bg-bg-hover transition-colors font-mono text-sm"
-                      >
-                        {repo.path}
-                      </button>
-                    ))}
-                  </>
-                )}
-              </div>
-            )}
-          </div>
 
           {/* Advanced options */}
           <div className="flex">
@@ -628,8 +745,9 @@ function NewSessionPrompt({ isFocused, onFocusChange }: NewSessionPromptProps) {
               )}
             </div>
           </div>
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
