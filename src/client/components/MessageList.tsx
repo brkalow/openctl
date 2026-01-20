@@ -170,7 +170,7 @@ export function MessageList(props: MessageListProps) {
         <div className="flex flex-col gap-4 px-2 py-4">
           {turns.map((turn, i) => {
             if (turn.type === 'user') {
-              return <UserBubble key={`user-${i}`} message={turn.messages[0]} />;
+              return <UserBubble key={`user-${i}`} message={turn.messages[0]!} />;
             } else {
               return (
                 <AgentTurn

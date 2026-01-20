@@ -181,7 +181,7 @@ interface ExpandedToolContentProps {
 function ExpandedToolContent({ result }: ExpandedToolContentProps) {
   const [showAll, setShowAll] = useState(false);
 
-  const content = stripSystemTags(result.content);
+  const content = result.content ? stripSystemTags(result.content) : '';
   const lines = content.split('\n');
   const isLarge = lines.length > 20;
   const displayContent = isLarge && !showAll ? lines.slice(0, 20).join('\n') : content;

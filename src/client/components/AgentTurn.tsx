@@ -91,7 +91,7 @@ export function AgentTurn({ messages, toolResults }: AgentTurnProps) {
       {/* Activity list */}
       <div className="activity-list flex flex-col gap-0.5 py-1">
         {messages.map((message) =>
-          message.content_blocks?.map((block, i) =>
+          (message.content_blocks ?? []).map((block, i) =>
             renderBlock(block, i, message.id, toolResults)
           )
         )}
@@ -272,20 +272,33 @@ function TaskLine({ block, result }: TaskLineProps) {
 
   const hasContent = result?.content && result.content.length > 0;
 
+  const sharedClassName = "flex items-center gap-1.5 text-text-muted text-[13px]";
+  const interactiveClassName = `${sharedClassName} hover:text-text-secondary transition-colors`;
+
   return (
     <div className="task-line py-0.5">
-      <button
-        className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors text-[13px]"
-        onClick={() => hasContent && setExpanded(!expanded)}
-        disabled={!hasContent}
-      >
-        <span className={`flex-shrink-0 ${expanded ? 'text-text-secondary' : ''}`}>
-          {expanded ? <IconChevron /> : <IconRobot />}
-        </span>
-        <span className="font-medium">{agentName}</span>
-        <span className="truncate max-w-[300px]">{description.slice(0, 50)}</span>
-        <span className={statusColor}>{status}</span>
-      </button>
+      {hasContent ? (
+        <button
+          className={interactiveClassName}
+          onClick={() => setExpanded(!expanded)}
+        >
+          <span className={`flex-shrink-0 ${expanded ? 'text-text-secondary' : ''}`}>
+            {expanded ? <IconChevron /> : <IconRobot />}
+          </span>
+          <span className="font-medium">{agentName}</span>
+          <span className="truncate max-w-[300px]">{description.slice(0, 50)}</span>
+          <span className={statusColor}>{status}</span>
+        </button>
+      ) : (
+        <div className={sharedClassName}>
+          <span className="flex-shrink-0">
+            <IconRobot />
+          </span>
+          <span className="font-medium">{agentName}</span>
+          <span className="truncate max-w-[300px]">{description.slice(0, 50)}</span>
+          <span className={statusColor}>{status}</span>
+        </div>
+      )}
 
       {expanded && result?.content && (
         <div className="ml-5 mt-1">
