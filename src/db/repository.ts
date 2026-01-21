@@ -660,9 +660,9 @@ export class SessionRepository {
     sessionId: string,
     userId: string | null,
     clientId: string | null,
-    options: { requireLive?: boolean; requireOwner?: boolean } = {}
+    options: { requireLive?: boolean } = {}
   ): Result<{ isOwner: boolean }, NotFoundError | ForbiddenError> {
-    const { requireLive = false, requireOwner = false } = options;
+    const { requireLive = false } = options;
 
     if (!userId && !clientId) {
       return Result.err(new ForbiddenError({ sessionId, userId, clientId }));

@@ -10,6 +10,21 @@ import { logSessionStarted } from "../lib/audit-log";
 import { getAdapterById, getFileModifyingToolsForAdapter, extractFilePathFromTool } from "../../cli/adapters";
 import type { AdapterUIConfig } from "../../cli/adapters";
 import { extractAuth, requireAuth, type AuthContext } from "../middleware/auth";
+import { errorToResponse } from "../lib/api-helpers";
+import {
+  validateJson,
+  validateFormData,
+  validateQueryParams,
+  SpawnSessionSchema,
+  CreateLiveSessionSchema,
+  PushMessagesSchema,
+  PushToolResultsSchema,
+  PatchSessionSchema,
+  CompleteSessionSchema,
+  CreateSessionFormSchema,
+  UpdateSessionFormSchema,
+  TimeseriesQuerySchema,
+} from "../lib/validation";
 
 // Helper to calculate content length from content blocks
 function calculateContentLength(contentBlocks: Array<{ type: string; text?: string }>): number {
@@ -293,15 +308,15 @@ export function createApiRoutes(repo: SessionRepository) {
 
         const formData = await req.formData();
 
-        const title = formData.get("title") as string;
-        if (!title) {
-          return jsonError("Title is required", 400);
+        // Validate core form fields
+        const validationResult = validateFormData(formData, CreateSessionFormSchema);
+        if (validationResult.isErr()) {
+          return errorToResponse(validationResult.error);
         }
+        const validated = validationResult.unwrap();
 
-        const prUrl = formData.get("pr_url") as string;
-        if (prUrl && !isValidHttpUrl(prUrl)) {
-          return jsonError("Invalid PR URL - must be a valid HTTP(S) URL", 400);
-        }
+        const title = validated.title;
+        const prUrl = validated.pr_url;
 
         // Parse data before creating session (fail fast)
         const sessionFile = formData.get("session_file") as File | null;
@@ -320,7 +335,7 @@ export function createApiRoutes(repo: SessionRepository) {
         }
 
         // Extract harness for adapter-aware file detection
-        const harness = (formData.get("harness") as string) || null;
+        const harness = validated.harness || null;
 
         // Extract files touched in the conversation for diff relevance detection
         const touchedFiles = extractTouchedFiles(messages, harness || undefined);
@@ -377,22 +392,22 @@ export function createApiRoutes(repo: SessionRepository) {
         // Get client ID from request header
         const clientId = getClientId(req);
 
-        const claudeSessionId = (formData.get("claude_session_id") as string) || null;
+        const claudeSessionId = validated.claude_session_id || null;
 
         // Upsert session: if claude_session_id exists, update existing session
         const { session, isUpdate } = repo.upsertSessionWithDataAndReview(
           {
             id,
             title,
-            description: (formData.get("description") as string) || null,
+            description: validated.description || null,
             claude_session_id: claudeSessionId,
             agent_session_id: claudeSessionId,
             pr_url: prUrl || null,
             share_token: null,
-            project_path: (formData.get("project_path") as string) || null,
-            model: (formData.get("model") as string) || null,
+            project_path: validated.project_path || null,
+            model: validated.model || null,
             harness,
-            repo_url: (formData.get("repo_url") as string) || null,
+            repo_url: validated.repo_url || null,
             status: "archived",
             last_activity_at: null,
             interactive: false,
@@ -453,25 +468,22 @@ export function createApiRoutes(repo: SessionRepository) {
 
         const formData = await req.formData();
 
-        const title = formData.get("title") as string;
-        if (!title) {
-          return jsonError("Title is required", 400);
+        // Validate core form fields
+        const validationResult = validateFormData(formData, UpdateSessionFormSchema);
+        if (validationResult.isErr()) {
+          return errorToResponse(validationResult.error);
         }
-
-        const prUrl = formData.get("pr_url") as string;
-        if (prUrl && !isValidHttpUrl(prUrl)) {
-          return jsonError("Invalid PR URL - must be a valid HTTP(S) URL", 400);
-        }
+        const validated = validationResult.unwrap();
 
         repo.updateSession(sessionId, {
-          title,
-          description: (formData.get("description") as string) || null,
-          claude_session_id: (formData.get("claude_session_id") as string) || null,
-          pr_url: prUrl || null,
-          project_path: (formData.get("project_path") as string) || null,
-          model: (formData.get("model") as string) || null,
-          harness: (formData.get("harness") as string) || null,
-          repo_url: (formData.get("repo_url") as string) || null,
+          title: validated.title,
+          description: validated.description || null,
+          claude_session_id: validated.claude_session_id || null,
+          pr_url: validated.pr_url || null,
+          project_path: validated.project_path || null,
+          model: validated.model || null,
+          harness: validated.harness || null,
+          repo_url: validated.repo_url || null,
         });
 
         // Process session data
@@ -493,7 +505,7 @@ export function createApiRoutes(repo: SessionRepository) {
         }
 
         // Get harness for adapter-aware file detection (prefer form data, fall back to existing)
-        const harness = (formData.get("harness") as string) || existing.harness;
+        const harness = validated.harness || existing.harness;
 
         // Extract files touched in the conversation for diff relevance detection
         const touchedFiles = extractTouchedFiles(messages, harness || undefined);
@@ -569,18 +581,19 @@ export function createApiRoutes(repo: SessionRepository) {
           return jsonError("Forbidden", 403);
         }
 
-        const body = await req.json();
+        const validationResult = await validateJson(req, PatchSessionSchema);
+        if (validationResult.isErr()) {
+          return errorToResponse(validationResult.error);
+        }
+        const body = validationResult.unwrap();
+
         const updates: Partial<{ title: string; description: string }> = {};
 
-        if (typeof body.title === "string") {
+        if (body.title !== undefined) {
           updates.title = body.title;
         }
-        if (typeof body.description === "string") {
+        if (body.description !== undefined) {
           updates.description = body.description;
-        }
-
-        if (Object.keys(updates).length === 0) {
-          return jsonError("No valid fields to update", 400);
         }
 
         repo.updateSession(sessionId, updates);
@@ -676,15 +689,15 @@ export function createApiRoutes(repo: SessionRepository) {
     // Create or resume a live session
     async createLiveSession(req: Request): Promise<Response> {
       try {
-        const body = await req.json();
-        const { title, project_path, harness_session_id, harness, model, repo_url, interactive = false } = body;
-        // Support both old and new field names for backwards compatibility
-        const harnessSessionId = harness_session_id || body.claude_session_id;
-        const clientId = getClientId(req);
-
-        if (!title) {
-          return jsonError("Title is required", 400);
+        const validationResult = await validateJson(req, CreateLiveSessionSchema);
+        if (validationResult.isErr()) {
+          return errorToResponse(validationResult.error);
         }
+        const body = validationResult.unwrap();
+        const { title, project_path, harness, model, repo_url, interactive } = body;
+        // Support both old and new field names for backwards compatibility
+        const harnessSessionId = body.harness_session_id || body.claude_session_id;
+        const clientId = getClientId(req);
 
         if (!clientId) {
           return jsonError("X-Openctl-Client-ID header required", 401);
@@ -815,17 +828,16 @@ export function createApiRoutes(repo: SessionRepository) {
           return jsonError("Forbidden", 403);
         }
 
-        const body = await req.json();
-        const { messages: rawMessages } = body;
-
-        if (!Array.isArray(rawMessages)) {
-          return jsonError("messages must be an array", 400);
+        const validationResult = await validateJson(req, PushMessagesSchema);
+        if (validationResult.isErr()) {
+          return errorToResponse(validationResult.error);
         }
+        const { messages: rawMessages } = validationResult.unwrap();
 
         // Parse messages without indices first
         const parsedMessages: Array<Omit<Message, "id" | "message_index">> = [];
         for (const item of rawMessages) {
-          const msg = extractMessageData(item, sessionId);
+          const msg = extractMessageData(item as Record<string, unknown>, sessionId);
           if (msg) {
             parsedMessages.push(msg);
           }
@@ -922,12 +934,11 @@ export function createApiRoutes(repo: SessionRepository) {
           return jsonError("Forbidden", 403);
         }
 
-        const body = await req.json();
-        const { results } = body;
-
-        if (!Array.isArray(results)) {
-          return jsonError("results must be an array", 400);
+        const validationResult = await validateJson(req, PushToolResultsSchema);
+        if (validationResult.isErr()) {
+          return errorToResponse(validationResult.error);
         }
+        const { results } = validationResult.unwrap();
 
         // Broadcast each tool result
         for (const result of results) {
@@ -1038,7 +1049,9 @@ export function createApiRoutes(repo: SessionRepository) {
           return jsonError("Forbidden", 403);
         }
 
-        const body = await req.json().catch(() => ({}));
+        // Validate optional body (empty body or invalid JSON treated as empty for backwards compatibility)
+        const validationResult = await validateJson(req, CompleteSessionSchema);
+        const body = validationResult.isOk() ? validationResult.unwrap() : {};
         const { final_diff, summary } = body;
 
         // Update description if summary provided
@@ -1232,16 +1245,20 @@ export function createApiRoutes(repo: SessionRepository) {
       }
 
       const url = new URL(req.url);
-      const statType = url.searchParams.get("stat");
-      const period = parsePeriod(url.searchParams.get("period"));
-      const fill = url.searchParams.get("fill") === "true";
+
+      // Validate query parameters
+      const validationResult = validateQueryParams(url, TimeseriesQuerySchema);
+      if (validationResult.isErr()) {
+        return errorToResponse(validationResult.error);
+      }
+      const params = validationResult.unwrap();
+
+      const statType = params.stat;
+      const period = parsePeriod(params.period);
+      const fill = params.fill ?? false;
 
       // Always filter stats by the authenticated user's client_id
       const clientId = auth.clientId ?? undefined;
-
-      if (!statType) {
-        return jsonError("stat parameter is required", 400);
-      }
 
       // Validate stat type
       const validStats = [
@@ -1504,25 +1521,15 @@ export function createApiRoutes(repo: SessionRepository) {
           return jsonError("No daemon connected", 503);
         }
 
-        // Parse request
-        const body = await req.json() as {
-          prompt?: string;
-          cwd?: string;
-          harness?: string;
-          model?: string;
-          permission_mode?: "relay" | "auto-safe" | "auto";
-        };
-
-        // Validate required fields
-        if (!body.prompt?.trim()) {
-          return jsonError("prompt is required", 400);
+        // Validate request body
+        const validationResult = await validateJson(req, SpawnSessionSchema);
+        if (validationResult.isErr()) {
+          return errorToResponse(validationResult.error);
         }
-        if (!body.cwd?.trim()) {
-          return jsonError("cwd is required", 400);
-        }
+        const body = validationResult.unwrap();
 
         // Validate harness is supported
-        const harness = body.harness || "claude-code";
+        const harness = body.harness;
         const supportedHarness = daemon.capabilities.spawnable_harnesses.find(
           (h) => h.id === harness && h.available
         );
