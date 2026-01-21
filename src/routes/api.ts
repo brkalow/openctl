@@ -157,11 +157,12 @@ export function createApiRoutes(repo: SessionRepository) {
         const authError = requireAuth(auth);
         if (authError) return authError;
 
-        const session = repo.getSessionByClaudeSessionId(claudeSessionId);
-        if (session) {
+        const sessionResult = repo.getSessionByClaudeSessionId(claudeSessionId);
+        if (sessionResult.isOk()) {
+          const session = sessionResult.unwrap();
           // Verify ownership
-          const { allowed } = repo.verifyOwnership(session.id, auth.userId, auth.clientId);
-          if (!allowed) {
+          const ownershipResult = repo.verifyOwnership(session.id, auth.userId, auth.clientId);
+          if (ownershipResult.isErr()) {
             return json({ session: null });
           }
           return json({
@@ -184,10 +185,11 @@ export function createApiRoutes(repo: SessionRepository) {
 
     // Get session detail with messages and diffs
     async getSessionDetail(req: Request, sessionId: string, baseUrl?: string): Promise<Response> {
-      const session = repo.getSession(sessionId);
-      if (!session) {
+      const sessionResult = repo.getSession(sessionId);
+      if (sessionResult.isErr()) {
         return jsonError("Session not found", 404);
       }
+      const session = sessionResult.unwrap();
 
       const auth = await extractAuth(req);
 
@@ -196,15 +198,16 @@ export function createApiRoutes(repo: SessionRepository) {
 
       if (!isPubliclyAccessible) {
         // Check ownership via repository (handles user_id OR client_id)
-        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
-        if (!allowed) {
+        const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (ownershipResult.isErr()) {
           return jsonError("Forbidden", 403);
         }
       }
 
       const messages = repo.getMessages(sessionId);
       const diffs = repo.getDiffs(sessionId);
-      const review = repo.getReviewWithCount(sessionId);
+      const reviewResult = repo.getReviewWithCount(sessionId);
+      const review = reviewResult.isOk() ? reviewResult.unwrap() : null;
 
       let shareUrl: string | null = null;
       if (session.share_token && baseUrl) {
@@ -232,10 +235,11 @@ export function createApiRoutes(repo: SessionRepository) {
 
     // Get diffs for a session
     async getSessionDiffs(req: Request, sessionId: string): Promise<Response> {
-      const session = repo.getSession(sessionId);
-      if (!session) {
+      const sessionResult = repo.getSession(sessionId);
+      if (sessionResult.isErr()) {
         return jsonError("Session not found", 404);
       }
+      const session = sessionResult.unwrap();
 
       const auth = await extractAuth(req);
 
@@ -244,8 +248,8 @@ export function createApiRoutes(repo: SessionRepository) {
 
       if (!isPubliclyAccessible) {
         // Check ownership via repository (handles user_id OR client_id)
-        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
-        if (!allowed) {
+        const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (ownershipResult.isErr()) {
           return jsonError("Forbidden", 403);
         }
       }
@@ -256,14 +260,16 @@ export function createApiRoutes(repo: SessionRepository) {
 
     // Get shared session detail
     getSharedSessionDetail(shareToken: string, baseUrl?: string): Response {
-      const session = repo.getSessionByShareToken(shareToken);
-      if (!session) {
+      const sessionResult = repo.getSessionByShareToken(shareToken);
+      if (sessionResult.isErr()) {
         return jsonError("Session not found", 404);
       }
+      const session = sessionResult.unwrap();
 
       const messages = repo.getMessages(session.id);
       const diffs = repo.getDiffs(session.id);
-      const review = repo.getReviewWithCount(session.id);
+      const reviewResult = repo.getReviewWithCount(session.id);
+      const review = reviewResult.isOk() ? reviewResult.unwrap() : null;
 
       const shareUrl = baseUrl ? `${baseUrl}/s/${session.share_token}` : null;
 
@@ -439,10 +445,11 @@ export function createApiRoutes(repo: SessionRepository) {
     // Update session
     async updateSession(req: Request, sessionId: string): Promise<Response> {
       try {
-        const existing = repo.getSession(sessionId);
-        if (!existing) {
+        const existingResult = repo.getSession(sessionId);
+        if (existingResult.isErr()) {
           return jsonError("Session not found", 404);
         }
+        const existing = existingResult.unwrap();
 
         const formData = await req.formData();
 
@@ -521,8 +528,8 @@ export function createApiRoutes(repo: SessionRepository) {
 
     // Delete session
     async deleteSession(req: Request, sessionId: string): Promise<Response> {
-      const session = repo.getSession(sessionId);
-      if (!session) {
+      const sessionResult = repo.getSession(sessionId);
+      if (sessionResult.isErr()) {
         return jsonError("Session not found", 404);
       }
 
@@ -531,9 +538,9 @@ export function createApiRoutes(repo: SessionRepository) {
       if (authError) return authError;
 
       // Verify ownership (user_id OR client_id, or legacy session)
-      const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+      const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
 
-      if (!allowed) {
+      if (ownershipResult.isErr()) {
         return jsonError("Forbidden", 403);
       }
 
@@ -547,8 +554,8 @@ export function createApiRoutes(repo: SessionRepository) {
     // Patch session (JSON body for partial updates, used by daemon for title updates)
     async patchSession(req: Request, sessionId: string): Promise<Response> {
       try {
-        const session = repo.getSession(sessionId);
-        if (!session) {
+        const sessionResult = repo.getSession(sessionId);
+        if (sessionResult.isErr()) {
           return jsonError("Session not found", 404);
         }
 
@@ -557,8 +564,8 @@ export function createApiRoutes(repo: SessionRepository) {
         if (authError) return authError;
 
         // Verify ownership (user_id OR client_id, or legacy session)
-        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
-        if (!allowed) {
+        const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (ownershipResult.isErr()) {
           return jsonError("Forbidden", 403);
         }
 
@@ -587,18 +594,19 @@ export function createApiRoutes(repo: SessionRepository) {
 
     // Create share link
     async shareSession(req: Request, sessionId: string): Promise<Response> {
-      const session = repo.getSession(sessionId);
-      if (!session) {
+      const sessionResult = repo.getSession(sessionId);
+      if (sessionResult.isErr()) {
         return jsonError("Session not found", 404);
       }
+      const session = sessionResult.unwrap();
 
       const auth = await extractAuth(req);
       const authError = requireAuth(auth);
       if (authError) return authError;
 
       // Verify ownership (user_id OR client_id, or legacy session)
-      const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
-      if (!allowed) {
+      const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+      if (ownershipResult.isErr()) {
         return jsonError("Forbidden", 403);
       }
 
@@ -614,17 +622,18 @@ export function createApiRoutes(repo: SessionRepository) {
 
     // Get session as JSON (for export)
     async getSessionJson(req: Request, sessionId: string): Promise<Response> {
-      const session = repo.getSession(sessionId);
-      if (!session) {
+      const sessionResult = repo.getSession(sessionId);
+      if (sessionResult.isErr()) {
         return jsonError("Session not found", 404);
       }
+      const session = sessionResult.unwrap();
 
       const auth = await extractAuth(req);
 
       // Check ownership via repository (handles user_id OR client_id)
-      const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+      const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
 
-      if (!allowed) {
+      if (ownershipResult.isErr()) {
         return jsonError("Forbidden", 403);
       }
 
@@ -709,8 +718,9 @@ export function createApiRoutes(repo: SessionRepository) {
           }
 
           // No live session, check for completed/archived session to restore
-          existingSession = repo.getSessionByHarnessId(harnessSessionId, harness);
-          if (existingSession) {
+          const byHarnessResult = repo.getSessionByHarnessId(harnessSessionId, harness);
+          if (byHarnessResult.isOk()) {
+            existingSession = byHarnessResult.unwrap();
             // Restore the session to live status
             repo.restoreSessionToLive(existingSession.id);
 
@@ -786,10 +796,11 @@ export function createApiRoutes(repo: SessionRepository) {
         const sizeError = validateContentLength(req, MAX_JSON_PAYLOAD_BYTES);
         if (sizeError) return sizeError;
 
-        const session = repo.getSession(sessionId);
-        if (!session) {
+        const sessionResult = repo.getSession(sessionId);
+        if (sessionResult.isErr()) {
           return jsonError("Session not found", 404);
         }
+        const session = sessionResult.unwrap();
         if (session.status !== "live") {
           return jsonError("Session is not live", 409);
         }
@@ -799,8 +810,8 @@ export function createApiRoutes(repo: SessionRepository) {
         if (authError) return authError;
 
         // Verify ownership (user_id OR client_id, or legacy session)
-        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
-        if (!allowed) {
+        const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (ownershipResult.isErr()) {
           return jsonError("Forbidden", 403);
         }
 
@@ -892,8 +903,12 @@ export function createApiRoutes(repo: SessionRepository) {
         const sizeError = validateContentLength(req, MAX_JSON_PAYLOAD_BYTES);
         if (sizeError) return sizeError;
 
-        const session = repo.getSession(sessionId);
-        if (!session || session.status !== "live") {
+        const sessionResult = repo.getSession(sessionId);
+        if (sessionResult.isErr()) {
+          return jsonError("Session not found or not live", 404);
+        }
+        const session = sessionResult.unwrap();
+        if (session.status !== "live") {
           return jsonError("Session not found or not live", 404);
         }
 
@@ -902,8 +917,8 @@ export function createApiRoutes(repo: SessionRepository) {
         if (authError) return authError;
 
         // Verify ownership (user_id OR client_id, or legacy session)
-        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
-        if (!allowed) {
+        const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (ownershipResult.isErr()) {
           return jsonError("Forbidden", 403);
         }
 
@@ -946,8 +961,12 @@ export function createApiRoutes(repo: SessionRepository) {
         const sizeError = validateContentLength(req, MAX_DIFF_PAYLOAD_BYTES);
         if (sizeError) return sizeError;
 
-        const session = repo.getSession(sessionId);
-        if (!session || session.status !== "live") {
+        const sessionResult = repo.getSession(sessionId);
+        if (sessionResult.isErr()) {
+          return jsonError("Session not found or not live", 404);
+        }
+        const session = sessionResult.unwrap();
+        if (session.status !== "live") {
           return jsonError("Session not found or not live", 404);
         }
 
@@ -956,8 +975,8 @@ export function createApiRoutes(repo: SessionRepository) {
         if (authError) return authError;
 
         // Verify ownership (user_id OR client_id, or legacy session)
-        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
-        if (!allowed) {
+        const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (ownershipResult.isErr()) {
           return jsonError("Forbidden", 403);
         }
 
@@ -1003,18 +1022,19 @@ export function createApiRoutes(repo: SessionRepository) {
     // Complete a live session
     async completeSession(req: Request, sessionId: string): Promise<Response> {
       try {
-        const session = repo.getSession(sessionId);
-        if (!session) {
+        const sessionResult = repo.getSession(sessionId);
+        if (sessionResult.isErr()) {
           return jsonError("Session not found", 404);
         }
+        const session = sessionResult.unwrap();
 
         const auth = await extractAuth(req);
         const authError = requireAuth(auth);
         if (authError) return authError;
 
         // Verify ownership (user_id OR client_id, or legacy session) - don't require live status as session may have timed out
-        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
-        if (!allowed) {
+        const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (ownershipResult.isErr()) {
           return jsonError("Forbidden", 403);
         }
 
@@ -1077,8 +1097,8 @@ export function createApiRoutes(repo: SessionRepository) {
     // Mark a live session as interactive (enables browser feedback)
     async markInteractive(req: Request, sessionId: string): Promise<Response> {
       try {
-        const session = repo.getSession(sessionId);
-        if (!session) {
+        const sessionResult = repo.getSession(sessionId);
+        if (sessionResult.isErr()) {
           return jsonError("Session not found", 404);
         }
 
@@ -1087,8 +1107,8 @@ export function createApiRoutes(repo: SessionRepository) {
         if (authError) return authError;
 
         // Verify ownership (user_id OR client_id, or legacy session)
-        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
-        if (!allowed) {
+        const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (ownershipResult.isErr()) {
           return jsonError("Forbidden", 403);
         }
 
@@ -1104,8 +1124,8 @@ export function createApiRoutes(repo: SessionRepository) {
     // Disable interactive mode for a session (called when daemon disconnects)
     async disableInteractive(req: Request, sessionId: string): Promise<Response> {
       try {
-        const session = repo.getSession(sessionId);
-        if (!session) {
+        const sessionResult = repo.getSession(sessionId);
+        if (sessionResult.isErr()) {
           return jsonError("Session not found", 404);
         }
 
@@ -1114,8 +1134,8 @@ export function createApiRoutes(repo: SessionRepository) {
         if (authError) return authError;
 
         // Verify ownership (user_id OR client_id, or legacy session)
-        const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
-        if (!allowed) {
+        const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+        if (ownershipResult.isErr()) {
           return jsonError("Forbidden", 403);
         }
 
@@ -1135,28 +1155,28 @@ export function createApiRoutes(repo: SessionRepository) {
 
     // Get annotations for a session (for lazy loading in frontend)
     async getAnnotations(req: Request, sessionId: string): Promise<Response> {
-      const session = repo.getSession(sessionId);
-      if (!session) {
+      const sessionResult = repo.getSession(sessionId);
+      if (sessionResult.isErr()) {
         return jsonError("Session not found", 404);
       }
 
       const auth = await extractAuth(req);
 
       // Check ownership via repository (handles user_id OR client_id)
-      const { allowed } = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+      const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
 
-      if (!allowed) {
+      if (ownershipResult.isErr()) {
         return jsonError("Forbidden", 403);
       }
 
-      const review = repo.getReview(sessionId);
-      if (!review) {
+      const reviewResult = repo.getReview(sessionId);
+      if (reviewResult.isErr()) {
         return json({ review: null, annotations_by_diff: {} });
       }
 
       const annotationsByDiff = repo.getAnnotationsGroupedByDiff(sessionId);
 
-      return json({ review, annotations_by_diff: annotationsByDiff });
+      return json({ review: reviewResult.unwrap(), annotations_by_diff: annotationsByDiff });
     },
 
     // === Analytics Stats Endpoints ===
@@ -1808,16 +1828,17 @@ export function createApiRoutes(repo: SessionRepository) {
       }
 
       // Fall back to DB session
-      const dbSession = repo.getSession(sessionId);
-      if (dbSession) {
+      const dbSessionResult = repo.getSession(sessionId);
+      if (dbSessionResult.isOk()) {
+        const dbSession = dbSessionResult.unwrap();
         // Check if session is shared (has share_token) - allow public access
         // Also allow access to remote sessions (browser-spawned) for any authenticated user
         const isPubliclyAccessible = dbSession.share_token || dbSession.remote;
 
         if (!isPubliclyAccessible) {
           // Check ownership for non-shared, non-remote sessions
-          const { allowed } = repo.verifyOwnership(sessionId, auth.userId, clientId);
-          if (!allowed) {
+          const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, clientId);
+          if (ownershipResult.isErr()) {
             return jsonError("Not authorized to access this session", 403);
           }
         }
