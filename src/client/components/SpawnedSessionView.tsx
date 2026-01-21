@@ -10,13 +10,58 @@ import {
 import { ControlRequestPrompt } from "./ControlRequestPrompt";
 import { SessionHeader } from "./SessionHeader";
 import { SessionInput } from "./SessionInput";
-import { MessageBlock } from "./MessageBlock";
+import { UserBubble } from "./UserBubble";
+import { AgentTurn } from "./AgentTurn";
 import { QuestionModal } from "./QuestionModal";
 import { ConnectionLostBanner } from "./ConnectionLostBanner";
 import { DiffBlock } from "./DiffBlock";
 import { buildToolResultMap } from "../blocks";
 import { isNearBottom, scrollToBottom } from "../liveSession";
 import type { Message } from "../../db/schema";
+
+// Group messages into turns: each user message starts a new turn,
+// followed by consecutive assistant messages
+interface Turn {
+  type: 'user' | 'agent';
+  messages: Message[];
+}
+
+function groupMessagesIntoTurns(messages: Message[]): Turn[] {
+  const turns: Turn[] = [];
+  let currentAgentMessages: Message[] = [];
+
+  for (const message of messages) {
+    // Skip user messages with no displayable content (tool_result-only or empty)
+    if (message.role === 'user') {
+      const hasDisplayableContent = message.content_blocks?.some(
+        (block) => block.type !== 'tool_result'
+      );
+      if (!hasDisplayableContent) {
+        continue;
+      }
+
+      // Flush any pending agent messages
+      if (currentAgentMessages.length > 0) {
+        turns.push({ type: 'agent', messages: currentAgentMessages });
+        currentAgentMessages = [];
+      }
+
+      // Add user turn
+      turns.push({ type: 'user', messages: [message] });
+    } else if (message.role === 'assistant') {
+      // Accumulate assistant messages
+      currentAgentMessages.push(message);
+    }
+    // Skip system messages
+  }
+
+  // Flush remaining agent messages
+  if (currentAgentMessages.length > 0) {
+    turns.push({ type: 'agent', messages: currentAgentMessages });
+  }
+
+  return turns;
+}
 
 interface SpawnedSessionViewProps {
   sessionId: string;
@@ -134,11 +179,14 @@ export function SpawnedSessionView({
       });
   }, [messages, sessionId]);
 
-  // Build tool result map for MessageBlock
+  // Build tool result map for AgentTurn
   const toolResults = useMemo(() => {
     const allBlocks = convertedMessages.flatMap((m) => m.content_blocks || []);
     return buildToolResultMap(allBlocks);
   }, [convertedMessages]);
+
+  // Group messages into turns
+  const turns = useMemo(() => groupMessagesIntoTurns(convertedMessages), [convertedMessages]);
 
   // Derive title from first user message
   useEffect(() => {
@@ -282,36 +330,36 @@ export function SpawnedSessionView({
             className="flex-1 overflow-y-auto px-6"
             onScroll={handleScroll}
           >
-            {convertedMessages.map((message, i) => {
-              const prevRole =
-                i > 0 ? convertedMessages[i - 1]?.role : null;
-              const roleChanged =
-                prevRole !== null && prevRole !== message.role;
-              return (
-                <div key={message.id} className={roleChanged ? "mt-2" : ""}>
-                  <MessageBlock
-                    message={message}
-                    toolResults={toolResults}
-                    showRoleBadge={
-                      i === 0 || message.role !== convertedMessages[i - 1]?.role
-                    }
-                    messageIndex={i}
-                  />
-                </div>
-              );
-            })}
+            {/* Chat bubble layout */}
+            <div className="flex flex-col gap-4 py-4">
+              {turns.map((turn, i) => {
+                if (turn.type === 'user') {
+                  const message = turn.messages[0];
+                  if (!message) return null;
+                  return <UserBubble key={`user-${message.id}`} message={message} />;
+                } else {
+                  return (
+                    <AgentTurn
+                      key={`agent-${turn.messages[0]?.id ?? i}`}
+                      messages={turn.messages}
+                      toolResults={toolResults}
+                    />
+                  );
+                }
+              })}
 
-            {/* Control request prompt (inline, SDK format) */}
-            {controlRequest && (
-              <ControlRequestPrompt
-                request={controlRequest}
-                onAllow={handleControlRequestAllow}
-                onDeny={handleControlRequestDeny}
-              />
-            )}
+              {/* Control request prompt (inline, SDK format) */}
+              {controlRequest && (
+                <ControlRequestPrompt
+                  request={controlRequest}
+                  onAllow={handleControlRequestAllow}
+                  onDeny={handleControlRequestDeny}
+                />
+              )}
 
-            {/* Typing indicator */}
-            {showTypingIndicator && <TypingIndicator />}
+              {/* Typing indicator */}
+              {showTypingIndicator && <TypingIndicator />}
+            </div>
           </div>
 
           {/* New messages button */}
@@ -449,22 +497,23 @@ function SpawnedDiffPanel({ diffs }: SpawnedDiffPanelProps) {
 
 function TypingIndicator() {
   return (
-    <div className="flex items-center gap-2 py-3 px-4 text-text-muted border-l-2 border-role-assistant">
-      <div className="flex gap-1">
-        <span
-          className="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce"
-          style={{ animationDelay: "0ms" }}
-        />
-        <span
-          className="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce"
-          style={{ animationDelay: "150ms" }}
-        />
-        <span
-          className="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce"
-          style={{ animationDelay: "300ms" }}
-        />
+    <div className="agent-turn">
+      {/* Turn header style */}
+      <div className="turn-header flex items-center gap-3 text-text-muted text-xs py-1">
+        <div className="flex-1 h-px bg-bg-elevated" />
+        <span>working</span>
+        <div className="flex-1 h-px bg-bg-elevated" />
       </div>
-      <span className="text-sm">Claude is working...</span>
+
+      {/* Typing dots */}
+      <div className="flex items-center gap-2 py-2 text-text-muted">
+        <div className="flex gap-1">
+          <span className="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+          <span className="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+          <span className="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+        </div>
+        <span className="text-sm">Claude is working...</span>
+      </div>
     </div>
   );
 }
