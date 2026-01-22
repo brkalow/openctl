@@ -231,100 +231,48 @@ describe("SessionRepository - Client Ownership", () => {
   });
 
   describe("getRecentProjectPaths", () => {
+    function createTestSession(
+      id: string,
+      projectPath: string | null,
+      clientId?: string,
+      userId?: string
+    ) {
+      repo.createSession({
+        id,
+        title: id,
+        description: null,
+        claude_session_id: null,
+        pr_url: null,
+        share_token: null,
+        project_path: projectPath,
+        model: null,
+        harness: null,
+        repo_url: null,
+        status: "complete",
+        last_activity_at: null,
+        interactive: false,
+      }, clientId, userId);
+    }
+
     test("returns empty array when no userId or clientId provided", () => {
       expect(repo.getRecentProjectPaths()).toEqual([]);
       expect(repo.getRecentProjectPaths(undefined, undefined)).toEqual([]);
     });
 
     test("returns distinct project paths", () => {
-      // Create sessions with different project paths
-      repo.createSession({
-        id: "session_1",
-        title: "First",
-        description: null,
-        claude_session_id: null,
-        pr_url: null,
-        share_token: null,
-        project_path: "/path/a",
-        model: null,
-        harness: null,
-        repo_url: null,
-        status: "complete",
-        last_activity_at: null,
-        interactive: false,
-      }, "client-123");
-
-      repo.createSession({
-        id: "session_2",
-        title: "Second",
-        description: null,
-        claude_session_id: null,
-        pr_url: null,
-        share_token: null,
-        project_path: "/path/b",
-        model: null,
-        harness: null,
-        repo_url: null,
-        status: "complete",
-        last_activity_at: null,
-        interactive: false,
-      }, "client-123");
-
-      repo.createSession({
-        id: "session_3",
-        title: "Third",
-        description: null,
-        claude_session_id: null,
-        pr_url: null,
-        share_token: null,
-        project_path: "/path/a", // Same path as first session
-        model: null,
-        harness: null,
-        repo_url: null,
-        status: "complete",
-        last_activity_at: null,
-        interactive: false,
-      }, "client-123");
+      createTestSession("session_1", "/path/a", "client-123");
+      createTestSession("session_2", "/path/b", "client-123");
+      createTestSession("session_3", "/path/a", "client-123"); // duplicate path
 
       const paths = repo.getRecentProjectPaths(undefined, "client-123");
-      // Should have 2 distinct paths
       expect(paths).toHaveLength(2);
       expect(paths).toContain("/path/a");
       expect(paths).toContain("/path/b");
     });
 
     test("excludes sessions with null project_path", () => {
-      repo.createSession({
-        id: "session_1",
-        title: "With path",
-        description: null,
-        claude_session_id: null,
-        pr_url: null,
-        share_token: null,
-        project_path: "/valid/path",
-        model: null,
-        harness: null,
-        repo_url: null,
-        status: "complete",
-        last_activity_at: null,
-        interactive: false,
-      }, "client-123");
-
-      repo.createSession({
-        id: "session_2",
-        title: "Without path",
-        description: null,
-        claude_session_id: null,
-        pr_url: null,
-        share_token: null,
-        project_path: null,
-        model: null,
-        harness: null,
-        repo_url: null,
-        status: "complete",
-        last_activity_at: null,
-        interactive: false,
-      }, "client-123");
+      createTestSession("session_1", "/valid/path", "client-123");
+      createTestSession("session_2", null, "client-123");
 
       const paths = repo.getRecentProjectPaths(undefined, "client-123");
       expect(paths).toEqual(["/valid/path"]);
@@ -332,21 +280,7 @@ describe("SessionRepository - Client Ownership", () => {
 
     test("respects limit parameter", () => {
       for (let i = 0; i < 5; i++) {
-        repo.createSession({
-          id: `session_${i}`,
-          title: `Session ${i}`,
-          description: null,
-          claude_session_id: null,
-          pr_url: null,
-          share_token: null,
-          project_path: `/path/${i}`,
-          model: null,
-          harness: null,
-          repo_url: null,
-          status: "complete",
-          last_activity_at: null,
-          interactive: false,
-        }, "client-123");
+        createTestSession(`session_${i}`, `/path/${i}`, "client-123");
       }
 
       const paths = repo.getRecentProjectPaths(undefined, "client-123", 3);
@@ -354,95 +288,18 @@ describe("SessionRepository - Client Ownership", () => {
     });
 
     test("filters by userId when provided", () => {
-      repo.createSession({
-        id: "user_session",
-        title: "User session",
-        description: null,
-        claude_session_id: null,
-        pr_url: null,
-        share_token: null,
-        project_path: "/user/path",
-        model: null,
-        harness: null,
-        repo_url: null,
-        status: "complete",
-        last_activity_at: null,
-        interactive: false,
-      }, undefined, "user-123");
-
-      repo.createSession({
-        id: "other_session",
-        title: "Other session",
-        description: null,
-        claude_session_id: null,
-        pr_url: null,
-        share_token: null,
-        project_path: "/other/path",
-        model: null,
-        harness: null,
-        repo_url: null,
-        status: "complete",
-        last_activity_at: null,
-        interactive: false,
-      }, "client-456");
+      createTestSession("user_session", "/user/path", undefined, "user-123");
+      createTestSession("other_session", "/other/path", "client-456");
 
       const paths = repo.getRecentProjectPaths("user-123");
       expect(paths).toEqual(["/user/path"]);
     });
 
     test("returns paths from both userId and clientId when both provided", () => {
-      // Session owned by user
-      repo.createSession({
-        id: "user_session",
-        title: "User session",
-        description: null,
-        claude_session_id: null,
-        pr_url: null,
-        share_token: null,
-        project_path: "/user/project",
-        model: null,
-        harness: null,
-        repo_url: null,
-        status: "complete",
-        last_activity_at: null,
-        interactive: false,
-      }, undefined, "user-123");
+      createTestSession("user_session", "/user/project", undefined, "user-123");
+      createTestSession("client_session", "/client/project", "client-456");
+      createTestSession("other_session", "/other/project", "other-client", "other-user");
 
-      // Session owned by client
-      repo.createSession({
-        id: "client_session",
-        title: "Client session",
-        description: null,
-        claude_session_id: null,
-        pr_url: null,
-        share_token: null,
-        project_path: "/client/project",
-        model: null,
-        harness: null,
-        repo_url: null,
-        status: "complete",
-        last_activity_at: null,
-        interactive: false,
-      }, "client-456");
-
-      // Session owned by different user/client (should not be included)
-      repo.createSession({
-        id: "other_session",
-        title: "Other session",
-        description: null,
-        claude_session_id: null,
-        pr_url: null,
-        share_token: null,
-        project_path: "/other/project",
-        model: null,
-        harness: null,
-        repo_url: null,
-        status: "complete",
-        last_activity_at: null,
-        interactive: false,
-      }, "other-client", "other-user");
-
-      // When both userId and clientId provided, should get paths from either
       const paths = repo.getRecentProjectPaths("user-123", "client-456");
       expect(paths).toHaveLength(2);
       expect(paths).toContain("/user/project");
@@ -451,65 +308,15 @@ describe("SessionRepository - Client Ownership", () => {
     });
 
     test("orders paths by most recent usage", () => {
-      // Create sessions with explicit timestamps via direct SQL
-      // Session 1: oldest
-      repo.createSession({
-        id: "session_old",
-        title: "Old session",
-        description: null,
-        claude_session_id: null,
-        pr_url: null,
-        share_token: null,
-        project_path: "/path/old",
-        model: null,
-        harness: null,
-        repo_url: null,
-        status: "complete",
-        last_activity_at: null,
-        interactive: false,
-      }, "client-123");
-
-      // Update created_at to be in the past
+      createTestSession("session_old", "/path/old", "client-123");
       db.run("UPDATE sessions SET created_at = datetime('now', '-2 days') WHERE id = 'session_old'");
 
-      // Session 2: middle
-      repo.createSession({
-        id: "session_mid",
-        title: "Mid session",
-        description: null,
-        claude_session_id: null,
-        pr_url: null,
-        share_token: null,
-        project_path: "/path/mid",
-        model: null,
-        harness: null,
-        repo_url: null,
-        status: "complete",
-        last_activity_at: null,
-        interactive: false,
-      }, "client-123");
-
+      createTestSession("session_mid", "/path/mid", "client-123");
       db.run("UPDATE sessions SET created_at = datetime('now', '-1 day') WHERE id = 'session_mid'");
 
-      // Session 3: newest
-      repo.createSession({
-        id: "session_new",
-        title: "New session",
-        description: null,
-        claude_session_id: null,
-        pr_url: null,
-        share_token: null,
-        project_path: "/path/new",
-        model: null,
-        harness: null,
-        repo_url: null,
-        status: "complete",
-        last_activity_at: null,
-        interactive: false,
-      }, "client-123");
+      createTestSession("session_new", "/path/new", "client-123");
 
       const paths = repo.getRecentProjectPaths(undefined, "client-123");
-      // Should be ordered by most recent first
       expect(paths).toEqual(["/path/new", "/path/mid", "/path/old"]);
     });
   });
