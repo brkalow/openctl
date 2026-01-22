@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { TextBlock } from './TextBlock';
 import { ToolLine, ThinkingLine } from './ActivityLine';
 import type { Message, ContentBlock, ToolResultBlock, ToolUseBlock, ThinkingBlock } from '../../db/schema';
@@ -108,8 +108,18 @@ export function AgentTurn({ messages, toolResults }: AgentTurnProps) {
   const activitySection = lastActivityIndex >= 0 ? allBlocks.slice(0, lastActivityIndex + 1) : [];
   const trailingTextBlocks = lastActivityIndex >= 0 ? allBlocks.slice(lastActivityIndex + 1) : allBlocks;
 
-  // Auto-collapse when there are trailing text responses
+  // Auto-collapse when response first arrives during streaming
   const [expanded, setExpanded] = useState(trailingTextBlocks.length === 0);
+  const hadTextRef = useRef(trailingTextBlocks.length > 0);
+
+  useEffect(() => {
+    const hasText = trailingTextBlocks.length > 0;
+    // Collapse when response first arrives (transition from no text to has text)
+    if (hasText && !hadTextRef.current) {
+      setExpanded(false);
+    }
+    hadTextRef.current = hasText;
+  }, [trailingTextBlocks.length]);
 
   // Build summary text
   const showSummary = toolCount > 0;
