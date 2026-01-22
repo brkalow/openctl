@@ -1,4 +1,5 @@
 import { Database, Statement } from "bun:sqlite";
+import { Result } from "better-result";
 import type {
   Session,
   Message,
@@ -18,6 +19,7 @@ import type {
   SessionAuditLog,
 } from "./schema";
 import { normalizeEmail } from "../lib/email";
+import { NotFoundError, ForbiddenError, DatabaseError } from "../lib/errors";
 
 // Generate SQLite-compatible UTC timestamp (YYYY-MM-DD HH:MM:SS)
 function sqliteDatetimeNow(): string {
@@ -372,7 +374,7 @@ export class SessionRepository {
     return transaction();
   }
 
-  updateSession(id: string, updates: Partial<Omit<Session, "id" | "created_at">>): Session | null {
+  updateSession(id: string, updates: Partial<Omit<Session, "id" | "created_at">>): Result<Session, NotFoundError> {
     const fields: string[] = [];
     const values: unknown[] = [];
 
@@ -446,26 +448,39 @@ export class SessionRepository {
     const stmt = this.db.prepare(`
       UPDATE sessions SET ${fields.join(", ")} WHERE id = ? RETURNING *
     `);
-    return stmt.get(...values) as Session | null;
+    const result = stmt.get(...values) as Record<string, unknown> | null;
+    if (!result) {
+      return Result.err(new NotFoundError({ resource: "session", id }));
+    }
+    return Result.ok(this.normalizeSession(result));
   }
 
-  getSession(id: string): Session | null {
+  getSession(id: string): Result<Session, NotFoundError> {
     const result = this.stmts.getSession.get(id) as Record<string, unknown> | null;
-    return result ? this.normalizeSession(result) : null;
+    if (!result) {
+      return Result.err(new NotFoundError({ resource: "session", id }));
+    }
+    return Result.ok(this.normalizeSession(result));
   }
 
-  getSessionByShareToken(token: string): Session | null {
+  getSessionByShareToken(token: string): Result<Session, NotFoundError> {
     const result = this.stmts.getSessionByShareToken.get(token) as Record<string, unknown> | null;
-    return result ? this.normalizeSession(result) : null;
+    if (!result) {
+      return Result.err(new NotFoundError({ resource: "session", id: token }));
+    }
+    return Result.ok(this.normalizeSession(result));
   }
 
   /**
    * Find a live session by harness session ID.
    * Used to resume streaming to an existing session after daemon restart.
    */
-  getLiveSessionByHarnessId(harnessSessionId: string, harness: string): Session | null {
+  getLiveSessionByHarnessId(harnessSessionId: string, harness: string): Result<Session, NotFoundError> {
     const result = this.stmts.getLiveSessionByHarnessId.get(harnessSessionId, harness) as Record<string, unknown> | null;
-    return result ? this.normalizeSession(result) : null;
+    if (!result) {
+      return Result.err(new NotFoundError({ resource: "session", id: harnessSessionId }));
+    }
+    return Result.ok(this.normalizeSession(result));
   }
 
   /**
@@ -473,9 +488,12 @@ export class SessionRepository {
    * Used to restore a completed session back to live streaming.
    * Prefers live sessions, then archived/completed by most recent.
    */
-  getSessionByHarnessId(harnessSessionId: string, harness: string): Session | null {
+  getSessionByHarnessId(harnessSessionId: string, harness: string): Result<Session, NotFoundError> {
     const result = this.stmts.getSessionByHarnessId.get(harnessSessionId, harness) as Record<string, unknown> | null;
-    return result ? this.normalizeSession(result) : null;
+    if (!result) {
+      return Result.err(new NotFoundError({ resource: "session", id: harnessSessionId }));
+    }
+    return Result.ok(this.normalizeSession(result));
   }
 
   /**
@@ -483,18 +501,24 @@ export class SessionRepository {
    * Used for upserting sessions during batch upload.
    * Returns most recent session with matching UUID.
    */
-  getSessionByClaudeSessionId(claudeSessionId: string): Session | null {
+  getSessionByClaudeSessionId(claudeSessionId: string): Result<Session, NotFoundError> {
     const result = this.stmts.getSessionByClaudeSessionId.get(claudeSessionId) as Record<string, unknown> | null;
-    return result ? this.normalizeSession(result) : null;
+    if (!result) {
+      return Result.err(new NotFoundError({ resource: "session", id: claudeSessionId }));
+    }
+    return Result.ok(this.normalizeSession(result));
   }
 
   /**
    * Find a session by agent_session_id.
    * Returns most recent session with matching agent ID.
    */
-  getSessionByAgentSessionId(agentSessionId: string): Session | null {
+  getSessionByAgentSessionId(agentSessionId: string): Result<Session, NotFoundError> {
     const result = this.stmts.getSessionByAgentSessionId.get(agentSessionId) as Record<string, unknown> | null;
-    return result ? this.normalizeSession(result) : null;
+    if (!result) {
+      return Result.err(new NotFoundError({ resource: "session", id: agentSessionId }));
+    }
+    return Result.ok(this.normalizeSession(result));
   }
 
   getAllSessions(): Session[] {
@@ -723,7 +747,7 @@ export class SessionRepository {
 
   /**
    * Verify ownership of a session using either user_id or client_id.
-   * Returns { allowed: boolean, isOwner: boolean } for access control decisions.
+   * Returns Result with { isOwner: boolean } on success, or error on failure.
    *
    * Ownership is granted if:
    * - The user_id matches the session's user_id, OR
@@ -736,12 +760,12 @@ export class SessionRepository {
     sessionId: string,
     userId: string | null,
     clientId: string | null,
-    options: { requireLive?: boolean; requireOwner?: boolean } = {}
-  ): { allowed: boolean; isOwner: boolean } {
-    const { requireLive = false, requireOwner = false } = options;
+    options: { requireLive?: boolean } = {}
+  ): Result<{ isOwner: boolean }, NotFoundError | ForbiddenError> {
+    const { requireLive = false } = options;
 
     if (!userId && !clientId) {
-      return { allowed: false, isOwner: false };
+      return Result.err(new ForbiddenError({ sessionId, userId, clientId }));
     }
 
     const query = requireLive
@@ -752,7 +776,7 @@ export class SessionRepository {
     const result = stmt.get(sessionId) as { user_id: string | null; client_id: string | null } | null;
 
     if (!result) {
-      return { allowed: false, isOwner: false };
+      return Result.err(new NotFoundError({ resource: "session", id: sessionId }));
     }
 
     // Check ownership: user_id match OR client_id match
@@ -761,11 +785,11 @@ export class SessionRepository {
       (clientId && result.client_id === clientId) ||
       false;
 
-    if (requireOwner && !isOwner) {
-      return { allowed: false, isOwner: false };
+    if (!isOwner) {
+      return Result.err(new ForbiddenError({ sessionId, userId, clientId }));
     }
 
-    return { allowed: isOwner, isOwner };
+    return Result.ok({ isOwner });
   }
 
   /**
@@ -840,12 +864,20 @@ export class SessionRepository {
     ) as Review;
   }
 
-  getReview(sessionId: string): Review | null {
-    return this.stmts.getReview.get(sessionId) as Review | null;
+  getReview(sessionId: string): Result<Review, NotFoundError> {
+    const result = this.stmts.getReview.get(sessionId) as Review | null;
+    if (!result) {
+      return Result.err(new NotFoundError({ resource: "review", id: sessionId }));
+    }
+    return Result.ok(result);
   }
 
-  getReviewWithCount(sessionId: string): (Review & { annotation_count: number }) | null {
-    return this.stmts.getReviewWithCount.get(sessionId) as (Review & { annotation_count: number }) | null;
+  getReviewWithCount(sessionId: string): Result<Review & { annotation_count: number }, NotFoundError> {
+    const result = this.stmts.getReviewWithCount.get(sessionId) as (Review & { annotation_count: number }) | null;
+    if (!result) {
+      return Result.err(new NotFoundError({ resource: "review", id: sessionId }));
+    }
+    return Result.ok(result);
   }
 
   // Annotation methods
@@ -1111,9 +1143,12 @@ export class SessionRepository {
   ): { session: Session; isUpdate: boolean } {
     const transaction = this.db.transaction(() => {
       // Check if session with this claude_session_id already exists
-      let existingSession: Session | null = null;
+      let existingSession: Session | undefined = undefined;
       if (session.claude_session_id) {
-        existingSession = this.getSessionByClaudeSessionId(session.claude_session_id);
+        const lookupResult = this.getSessionByClaudeSessionId(session.claude_session_id);
+        if (lookupResult.isOk()) {
+          existingSession = lookupResult.unwrap();
+        }
       }
 
       let resultSession: Session;
@@ -1124,7 +1159,7 @@ export class SessionRepository {
         isUpdate = true;
         const sessionId = existingSession.id;
 
-        // Update session metadata
+        // Update session metadata (unwrap since we know session exists)
         resultSession = this.updateSession(sessionId, {
           title: session.title,
           description: session.description,
@@ -1133,7 +1168,7 @@ export class SessionRepository {
           model: session.model,
           harness: session.harness,
           repo_url: session.repo_url,
-        }) as Session;
+        }).unwrap();
 
         // Get existing diffs before clearing (for smart diff preservation)
         const existingDiffs = this.getDiffs(sessionId);
@@ -1630,10 +1665,11 @@ export class SessionRepository {
     isOwner: boolean;
   } {
     // Get session to check ownership and visibility
-    const session = this.getSession(sessionId);
-    if (!session) {
+    const sessionResult = this.getSession(sessionId);
+    if (sessionResult.isErr()) {
       return { hasAccess: false, role: null, isOwner: false };
     }
+    const session = sessionResult.unwrap();
 
     // Check if user is owner
     if (userId && session.user_id === userId) {
@@ -1681,16 +1717,17 @@ export class SessionRepository {
     canEdit: boolean;
   } {
     // First check ownership
-    const ownership = this.verifyOwnership(sessionId, userId, clientId);
-    if (ownership.isOwner) {
+    const ownershipResult = this.verifyOwnership(sessionId, userId, clientId);
+    if (ownershipResult.isOk() && ownershipResult.unwrap().isOwner) {
       return { allowed: true, isOwner: true, role: 'owner', canEdit: true };
     }
 
     // Get session to check visibility and collaborators
-    const session = this.getSession(sessionId);
-    if (!session) {
+    const sessionResult = this.getSession(sessionId);
+    if (sessionResult.isErr()) {
       return { allowed: false, isOwner: false, role: null, canEdit: false };
     }
+    const session = sessionResult.unwrap();
 
     // Check if public
     if (session.visibility === 'public') {
