@@ -26,6 +26,10 @@ import {
   CreateSessionFormSchema,
   UpdateSessionFormSchema,
   TimeseriesQuerySchema,
+  AddCollaboratorSchema,
+  UpdateCollaboratorSchema,
+  UpdateVisibilitySchema,
+  AuditLogQuerySchema,
 } from "../lib/validation";
 
 // Helper to calculate content length from content blocks
@@ -1997,9 +2001,9 @@ export function createApiRoutes(repo: SessionRepository) {
      * Requires owner access.
      */
     async addCollaborator(req: Request, sessionId: string): Promise<Response> {
-      const session = repo.getSession(sessionId);
-      if (!session) {
-        return jsonError("Session not found", 404);
+      const sessionResult = repo.getSession(sessionId);
+      if (sessionResult.isErr()) {
+        return errorToResponse(sessionResult.error);
       }
 
       const auth = await extractAuth(req);
@@ -2007,31 +2011,25 @@ export function createApiRoutes(repo: SessionRepository) {
       if (authError) return authError;
 
       // Verify ownership
-      const ownershipCheck = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
-      const isOwner = ownershipCheck.isOk() && ownershipCheck.unwrap().isOwner;
-      if (!isOwner) {
+      const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+      if (ownershipResult.isErr()) {
+        return errorToResponse(ownershipResult.error);
+      }
+      if (!ownershipResult.unwrap().isOwner) {
         return jsonError("Only the session owner can add collaborators", 403);
       }
+
+      // Validate request body
+      const validationResult = await validateJson(req, AddCollaboratorSchema);
+      if (validationResult.isErr()) {
+        return errorToResponse(validationResult.error);
+      }
+      const { email, role } = validationResult.unwrap();
 
       // Check collaborator limit (max 50)
       const count = repo.getCollaboratorCount(sessionId);
       if (count >= 50) {
         return jsonError("Maximum collaborator limit (50) reached", 400);
-      }
-
-      const body = await req.json() as { email?: string; role?: CollaboratorRole };
-      const { email, role = 'viewer' } = body;
-
-      if (!email || typeof email !== 'string') {
-        return jsonError("Email is required", 400);
-      }
-
-      if (!isValidEmail(email)) {
-        return jsonError("Invalid email format", 400);
-      }
-
-      if (role !== 'viewer' && role !== 'contributor') {
-        return jsonError("Role must be 'viewer' or 'contributor'", 400);
       }
 
       // Check if already a collaborator
@@ -2071,9 +2069,9 @@ export function createApiRoutes(repo: SessionRepository) {
      * Requires owner access.
      */
     async updateCollaborator(req: Request, sessionId: string, collaboratorId: number): Promise<Response> {
-      const session = repo.getSession(sessionId);
-      if (!session) {
-        return jsonError("Session not found", 404);
+      const sessionResult = repo.getSession(sessionId);
+      if (sessionResult.isErr()) {
+        return errorToResponse(sessionResult.error);
       }
 
       const auth = await extractAuth(req);
@@ -2081,9 +2079,11 @@ export function createApiRoutes(repo: SessionRepository) {
       if (authError) return authError;
 
       // Verify ownership
-      const ownershipCheck = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
-      const isOwner = ownershipCheck.isOk() && ownershipCheck.unwrap().isOwner;
-      if (!isOwner) {
+      const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+      if (ownershipResult.isErr()) {
+        return errorToResponse(ownershipResult.error);
+      }
+      if (!ownershipResult.unwrap().isOwner) {
         return jsonError("Only the session owner can update collaborators", 403);
       }
 
@@ -2093,12 +2093,12 @@ export function createApiRoutes(repo: SessionRepository) {
         return jsonError("Collaborator not found", 404);
       }
 
-      const body = await req.json() as { role?: CollaboratorRole };
-      const { role } = body;
-
-      if (!role || (role !== 'viewer' && role !== 'contributor')) {
-        return jsonError("Role must be 'viewer' or 'contributor'", 400);
+      // Validate request body
+      const validationResult = await validateJson(req, UpdateCollaboratorSchema);
+      if (validationResult.isErr()) {
+        return errorToResponse(validationResult.error);
       }
+      const { role } = validationResult.unwrap();
 
       const oldRole = collaborator.role;
       const updated = repo.updateCollaboratorRoleWithAudit(
@@ -2133,9 +2133,9 @@ export function createApiRoutes(repo: SessionRepository) {
      * Requires owner access.
      */
     async removeCollaborator(req: Request, sessionId: string, collaboratorId: number): Promise<Response> {
-      const session = repo.getSession(sessionId);
-      if (!session) {
-        return jsonError("Session not found", 404);
+      const sessionResult = repo.getSession(sessionId);
+      if (sessionResult.isErr()) {
+        return errorToResponse(sessionResult.error);
       }
 
       const auth = await extractAuth(req);
@@ -2143,9 +2143,11 @@ export function createApiRoutes(repo: SessionRepository) {
       if (authError) return authError;
 
       // Verify ownership
-      const ownershipCheck = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
-      const isOwner = ownershipCheck.isOk() && ownershipCheck.unwrap().isOwner;
-      if (!isOwner) {
+      const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+      if (ownershipResult.isErr()) {
+        return errorToResponse(ownershipResult.error);
+      }
+      if (!ownershipResult.unwrap().isOwner) {
         return jsonError("Only the session owner can remove collaborators", 403);
       }
 
@@ -2177,9 +2179,9 @@ export function createApiRoutes(repo: SessionRepository) {
      * Links the authenticated user to their pending collaborator record.
      */
     async acceptInvite(req: Request, sessionId: string): Promise<Response> {
-      const session = repo.getSession(sessionId);
-      if (!session) {
-        return jsonError("Session not found", 404);
+      const sessionResult = repo.getSession(sessionId);
+      if (sessionResult.isErr()) {
+        return errorToResponse(sessionResult.error);
       }
 
       const auth = await extractAuth(req);
@@ -2215,7 +2217,7 @@ export function createApiRoutes(repo: SessionRepository) {
     async updateVisibility(req: Request, sessionId: string): Promise<Response> {
       const sessionResult = repo.getSession(sessionId);
       if (sessionResult.isErr()) {
-        return jsonError("Session not found", 404);
+        return errorToResponse(sessionResult.error);
       }
       const session = sessionResult.unwrap();
 
@@ -2224,9 +2226,11 @@ export function createApiRoutes(repo: SessionRepository) {
       if (authError) return authError;
 
       // Verify ownership
-      const ownershipCheck = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
-      const isOwner = ownershipCheck.isOk() && ownershipCheck.unwrap().isOwner;
-      if (!isOwner) {
+      const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+      if (ownershipResult.isErr()) {
+        return errorToResponse(ownershipResult.error);
+      }
+      if (!ownershipResult.unwrap().isOwner) {
         return jsonError("Only the session owner can change visibility", 403);
       }
 
@@ -2235,12 +2239,12 @@ export function createApiRoutes(repo: SessionRepository) {
         return jsonError("Remote sessions cannot change visibility", 400);
       }
 
-      const body = await req.json() as { visibility?: SessionVisibility };
-      const { visibility } = body;
-
-      if (!visibility || (visibility !== 'private' && visibility !== 'public')) {
-        return jsonError("Visibility must be 'private' or 'public'", 400);
+      // Validate request body
+      const validationResult = await validateJson(req, UpdateVisibilitySchema);
+      if (validationResult.isErr()) {
+        return errorToResponse(validationResult.error);
       }
+      const { visibility } = validationResult.unwrap();
 
       const updated = repo.setSessionVisibilityWithAudit(sessionId, visibility, auth.userId!);
       if (!updated) {
@@ -2262,9 +2266,9 @@ export function createApiRoutes(repo: SessionRepository) {
      * Requires owner access.
      */
     async getAuditLog(req: Request, sessionId: string): Promise<Response> {
-      const session = repo.getSession(sessionId);
-      if (!session) {
-        return jsonError("Session not found", 404);
+      const sessionResult = repo.getSession(sessionId);
+      if (sessionResult.isErr()) {
+        return errorToResponse(sessionResult.error);
       }
 
       const auth = await extractAuth(req);
@@ -2272,14 +2276,21 @@ export function createApiRoutes(repo: SessionRepository) {
       if (authError) return authError;
 
       // Verify ownership
-      const ownershipCheck = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
-      const isOwner = ownershipCheck.isOk() && ownershipCheck.unwrap().isOwner;
-      if (!isOwner) {
+      const ownershipResult = repo.verifyOwnership(sessionId, auth.userId, auth.clientId);
+      if (ownershipResult.isErr()) {
+        return errorToResponse(ownershipResult.error);
+      }
+      if (!ownershipResult.unwrap().isOwner) {
         return jsonError("Only the session owner can view audit logs", 403);
       }
 
+      // Validate query params
       const url = new URL(req.url);
-      const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10), 100);
+      const queryResult = validateQueryParams(url, AuditLogQuerySchema);
+      if (queryResult.isErr()) {
+        return errorToResponse(queryResult.error);
+      }
+      const { limit } = queryResult.unwrap();
 
       const logs = repo.getAuditLogs(sessionId, limit);
 
