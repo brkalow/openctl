@@ -66,9 +66,9 @@ function handleUserMessage(
   repo: SessionRepository,
   sendToBrowser: (msg: ServerToBrowserMessage) => void
 ): void {
-  const session = repo.getSession(sessionId);
+  const sessionResult = repo.getSession(sessionId);
 
-  if (!session?.interactive) {
+  if (sessionResult.isErr() || !sessionResult.unwrap().interactive) {
     sendToBrowser({
       type: "error",
       code: "NOT_INTERACTIVE",
@@ -115,9 +115,9 @@ function handleDiffComment(
   repo: SessionRepository,
   sendToBrowser: (msg: ServerToBrowserMessage) => void
 ): void {
-  const session = repo.getSession(sessionId);
+  const sessionResult = repo.getSession(sessionId);
 
-  if (!session?.interactive) {
+  if (sessionResult.isErr() || !sessionResult.unwrap().interactive) {
     sendToBrowser({
       type: "error",
       code: "UNAVAILABLE",
@@ -170,9 +170,9 @@ function handleSuggestedEdit(
   repo: SessionRepository,
   sendToBrowser: (msg: ServerToBrowserMessage) => void
 ): void {
-  const session = repo.getSession(sessionId);
+  const sessionResult = repo.getSession(sessionId);
 
-  if (!session?.interactive) {
+  if (sessionResult.isErr() || !sessionResult.unwrap().interactive) {
     sendToBrowser({
       type: "error",
       code: "UNAVAILABLE",

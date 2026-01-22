@@ -112,9 +112,9 @@ export function handleGetPendingFeedbackByClaudeSession(
   console.log(`[feedback] Looking up session by claude_session_id=${claudeSessionId}`);
 
   // Look up session by Claude session ID
-  const session = repo.getSessionByClaudeSessionId(claudeSessionId);
+  const sessionResult = repo.getSessionByClaudeSessionId(claudeSessionId);
 
-  if (!session) {
+  if (sessionResult.isErr()) {
     console.log(`[feedback] Session not found for claude_session_id=${claudeSessionId}`);
     return new Response(
       JSON.stringify({ error: "Session not found for claude_session_id" }),
@@ -124,6 +124,7 @@ export function handleGetPendingFeedbackByClaudeSession(
       }
     );
   }
+  const session = sessionResult.unwrap();
 
   console.log(`[feedback] Found session: id=${session.id}, interactive=${session.interactive}`);
 
@@ -164,9 +165,11 @@ export function handleMarkSessionInteractive(
   console.log(`[interactive] Marking session interactive: claude_session_id=${claudeSessionId}`);
 
   // Look up session by Claude session ID
-  let session = repo.getSessionByClaudeSessionId(claudeSessionId);
+  const sessionResult = repo.getSessionByClaudeSessionId(claudeSessionId);
 
-  if (!session) {
+  let session: { id: string; interactive: boolean };
+
+  if (sessionResult.isErr()) {
     // No session exists - create one on-demand
     console.log(`[interactive] Session not found, creating new session for claude_session_id=${claudeSessionId}`);
 
@@ -193,6 +196,7 @@ export function handleMarkSessionInteractive(
 
     console.log(`[interactive] Created new session: id=${session.id}`);
   } else {
+    session = sessionResult.unwrap();
     console.log(`[interactive] Found session: id=${session.id}, current interactive=${session.interactive}`);
 
     // Mark session as interactive
@@ -232,9 +236,9 @@ export function handleMarkSessionFinished(
   console.log(`[session-end] Marking session finished: claude_session_id=${claudeSessionId}`);
 
   // Look up session by Claude session ID
-  const session = repo.getSessionByClaudeSessionId(claudeSessionId);
+  const sessionResult = repo.getSessionByClaudeSessionId(claudeSessionId);
 
-  if (!session) {
+  if (sessionResult.isErr()) {
     console.log(`[session-end] Session not found for claude_session_id=${claudeSessionId}`);
     return new Response(
       JSON.stringify({ error: "Session not found for claude_session_id" }),
@@ -244,6 +248,7 @@ export function handleMarkSessionFinished(
       }
     );
   }
+  const session = sessionResult.unwrap();
 
   console.log(`[session-end] Found session: id=${session.id}, status=${session.status}`);
 

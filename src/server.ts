@@ -862,11 +862,12 @@ const server = Bun.serve<WebSocketData>({
       }
 
       // Check if this is an archived session (database)
-      const session = repo.getSession(sessionId);
+      const sessionResult = repo.getSession(sessionId);
 
-      if (!session) {
+      if (sessionResult.isErr()) {
         return new Response("Session not found", { status: 404 });
       }
+      const session = sessionResult.unwrap();
 
       // Only allow WebSocket connections for live sessions
       // Once a session is complete/archived, use the regular API to fetch static data
@@ -910,7 +911,8 @@ const server = Bun.serve<WebSocketData>({
       const browserData = data as BrowserWebSocketData;
       if (browserData.isSpawned) {
         const spawnedSession = spawnedSessionRegistry.getSession(data.sessionId);
-        const dbSession = repo.getSession(data.sessionId);
+        const dbSessionResult = repo.getSession(data.sessionId);
+        const dbSession = dbSessionResult.isOk() ? dbSessionResult.unwrap() : null;
         const messageCount = repo.getMessageCount(data.sessionId);
         const lastIndex = repo.getLastMessageIndex(data.sessionId);
 
@@ -952,7 +954,8 @@ const server = Bun.serve<WebSocketData>({
       }
 
       // Send connected message with current state including interactive info (database sessions)
-      const session = repo.getSession(data.sessionId);
+      const sessionResult = repo.getSession(data.sessionId);
+      const session = sessionResult.isOk() ? sessionResult.unwrap() : null;
       const messageCount = repo.getMessageCount(data.sessionId);
       const lastIndex = repo.getLastMessageIndex(data.sessionId);
 
