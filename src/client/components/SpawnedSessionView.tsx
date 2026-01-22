@@ -224,6 +224,9 @@ export function SpawnedSessionView({
   const turns = useMemo(() => groupMessagesIntoTurns(convertedMessages), [convertedMessages]);
 
   // Create a session object for SessionView
+  // Note: Remote sessions are newly spawned and don't have pre-existing database records,
+  // so we use sensible defaults. Visibility defaults to "private" as a safe default for
+  // new sessions - users can share via the share modal if desired.
   const session: Session = useMemo(() => ({
     id: sessionId,
     title: title,
@@ -239,14 +242,14 @@ export function SpawnedSessionView({
     agent_session_id: null,
     pr_url: null,
     pr_number: null,
-    interactive: true, // Remote sessions are always interactive
+    interactive: true,
     share_token: null,
     description: null,
     repo_url: null,
     branch: null,
     visibility: "private",
     last_activity_at: null,
-    remote: true, // Remote sessions are always remote
+    remote: true,
   }), [sessionId, title, state, startTime, harness, model, cwd]);
 
   // Derive title from first user message

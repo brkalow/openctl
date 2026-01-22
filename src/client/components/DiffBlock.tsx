@@ -149,15 +149,17 @@ export function DiffBlock(props: DiffBlockProps) {
           <div className="flex items-center justify-between mb-2">
             <span className="text-text-muted">Unable to render diff for {filename}</span>
             <button
-              onClick={() => setExpanded(false)}
+              onClick={() => setExpanded(!expanded)}
               className="text-xs text-text-muted hover:text-text-primary"
             >
-              Hide
+              {expanded ? 'Hide raw diff' : 'Show raw diff'}
             </button>
           </div>
-          <pre className="text-xs font-mono whitespace-pre-wrap bg-bg-primary p-2 rounded overflow-x-auto max-h-96 overflow-y-auto">
-            {diffContent}
-          </pre>
+          {expanded && (
+            <pre className="text-xs font-mono whitespace-pre-wrap bg-bg-primary p-2 rounded overflow-x-auto max-h-96 overflow-y-auto">
+              {diffContent}
+            </pre>
+          )}
         </div>
       </div>
     );

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo } from "react";
+import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { stripSystemTags } from "../blocks";
 import type { Session, Message, Diff, Review, Annotation } from "../../db/schema";
 import type { ParsedDiff } from "../hooks/useSpawnedSession";
@@ -102,9 +102,28 @@ export function SessionView(props: SessionViewProps) {
     hasDiffs ? "split" : "conversation"
   );
 
+  // Auto-switch to split view when diffs first appear
+  const hadDiffsRef = useRef(hasDiffs);
+  useEffect(() => {
+    if (hasDiffs && !hadDiffsRef.current && viewMode === "conversation") {
+      setViewMode("split");
+    }
+    hadDiffsRef.current = hasDiffs;
+  }, [hasDiffs, viewMode]);
+
   // Overflow menu state
   const [showOverflowMenu, setShowOverflowMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuBlurTimeoutRef = useRef<number | null>(null);
+
+  // Cleanup menu blur timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (menuBlurTimeoutRef.current !== null) {
+        clearTimeout(menuBlurTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Derived state
   const isLive = mode === "remote"
@@ -113,7 +132,7 @@ export function SessionView(props: SessionViewProps) {
 
   // Close overflow menu on click outside
   const handleMenuBlur = useCallback(() => {
-    setTimeout(() => setShowOverflowMenu(false), 150);
+    menuBlurTimeoutRef.current = window.setTimeout(() => setShowOverflowMenu(false), 150);
   }, []);
 
   // Resume command
