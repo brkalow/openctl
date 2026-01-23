@@ -238,6 +238,7 @@ export function DiffBlock({
         cursor: 'pointer',
         transition: 'opacity 0.15s, transform 0.15s',
         boxShadow: '0 1px 3px rgba(0, 0, 0, 0.3)',
+        marginLeft: '-8px',
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.opacity = '0.9';
