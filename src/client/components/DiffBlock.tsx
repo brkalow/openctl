@@ -265,7 +265,7 @@ export function DiffBlock({
         <div className="bg-bg-secondary border border-bg-elevated rounded-lg p-4 my-3 mx-4 shadow-sm">
           <div className="flex items-center gap-2 mb-3">
             <span className="text-sm font-medium text-text-primary">Add comment</span>
-            <span className="text-xs text-text-muted font-mono">Line {metadata.lineNumber}</span>
+            <span className="text-xs text-text-muted">Line {metadata.lineNumber}</span>
           </div>
           <textarea
             value={commentText}
@@ -303,7 +303,7 @@ export function DiffBlock({
               <UserIcon />
             </div>
             <span className="text-sm font-medium text-text-primary">You</span>
-            <span className="text-xs text-text-muted font-mono">Line {metadata.lineNumber}</span>
+            <span className="text-xs text-text-muted">Line {metadata.lineNumber}</span>
           </div>
           <p className="text-sm text-text-secondary leading-relaxed pl-8">
             {metadata.content}
@@ -325,7 +325,7 @@ export function DiffBlock({
           <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${config.badgeClass}`}>
             {config.label}
           </span>
-          <span className="text-xs text-text-muted font-mono ml-auto">Line {(metadata as AnnotationMetadata).lineNumber}</span>
+          <span className="text-xs text-text-muted ml-auto">Line {(metadata as AnnotationMetadata).lineNumber}</span>
           <button
             className="p-1 text-text-muted hover:text-text-primary hover:bg-bg-tertiary rounded transition-colors"
             onClick={async () => {
