@@ -229,8 +229,8 @@ export function DiffBlock({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        width: '22px',
-        height: '22px',
+        width: '18px',
+        height: '18px',
         borderRadius: '50%',
         backgroundColor: '#67e8f9',
         color: '#0c0c0c',
@@ -251,7 +251,7 @@ export function DiffBlock({
       }}
       title="Add comment"
     >
-      <svg style={{ width: '14px', height: '14px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <svg style={{ width: '11px', height: '11px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
       </svg>
     </button>
