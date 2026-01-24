@@ -285,14 +285,14 @@ export function DiffBlock({
           <div className="flex items-center justify-end gap-2 mt-2">
             <button
               onClick={handleCancelComment}
-              className="px-2 py-1 text-sm text-text-muted hover:text-text-primary transition-colors"
+              className="px-2 py-1 text-xs text-text-muted hover:text-text-primary transition-colors"
             >
               Cancel
             </button>
             <button
               onClick={handleSubmitComment}
               disabled={!commentText.trim()}
-              className="px-3 py-1 text-sm font-medium bg-accent-primary text-bg-primary rounded hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-3 py-1 text-xs font-medium bg-accent-primary text-bg-primary rounded hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Comment
             </button>
