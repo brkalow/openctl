@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, Suspense, lazy, useSyncExternalStore } from 'react';
+import { useState, useMemo, useCallback, useEffect, Suspense, lazy, useSyncExternalStore } from 'react';
 import type { DiffLineAnnotation, FileDiffMetadata } from '@pierre/diffs';
 import type { Annotation, AnnotationType } from '../../db/schema';
 import { getSingularPatch } from '@pierre/diffs';
@@ -24,6 +24,11 @@ interface UserComment {
   lineNumber: number;
   content: string;
 }
+
+// Lazy load the React FileDiff component
+const FileDiff = lazy(() =>
+  import('@pierre/diffs/react').then(mod => ({ default: mod.FileDiff }))
+);
 
 interface AnnotationMetadata {
   id: number;
