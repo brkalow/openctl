@@ -268,7 +268,7 @@ export function DiffBlock({
     // Render pending comment input form
     if (metadata.type === 'user_comment' && metadata.id === 'pending') {
       return (
-        <div className="bg-bg-secondary border border-bg-elevated rounded-lg p-4 my-3 mx-4 shadow-sm">
+        <div className="font-sans bg-bg-secondary border border-bg-elevated rounded-lg p-4 my-3 mx-4 shadow-sm">
           <div className="flex items-center gap-2 mb-3">
             <span className="text-sm font-medium text-text-primary">Add comment</span>
             <span className="text-xs text-text-muted">Line {metadata.lineNumber}</span>
@@ -303,7 +303,7 @@ export function DiffBlock({
     // Render user comment
     if (metadata.type === 'user_comment') {
       return (
-        <div className="bg-bg-secondary border border-bg-elevated rounded-lg p-4 my-3 mx-4">
+        <div className="font-sans bg-bg-secondary border border-bg-elevated rounded-lg p-4 my-3 mx-4">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-6 h-6 rounded-full bg-role-user/20 flex items-center justify-center text-role-user shrink-0">
               <UserIcon />
@@ -322,7 +322,7 @@ export function DiffBlock({
     const config = annotationConfig[(metadata as AnnotationMetadata).type] || annotationConfig.suggestion;
 
     return (
-      <div className="bg-bg-secondary border border-bg-elevated rounded-lg p-4 my-3 mx-4">
+      <div className="font-sans bg-bg-secondary border border-bg-elevated rounded-lg p-4 my-3 mx-4">
         <div className="flex items-center gap-2 mb-2">
           <div className="w-6 h-6 rounded-full bg-gradient-to-br from-accent-secondary to-accent-primary flex items-center justify-center text-white text-xs font-semibold shrink-0">
             C
