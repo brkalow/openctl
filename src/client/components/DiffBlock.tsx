@@ -273,8 +273,8 @@ export function DiffBlock({
     // Render pending comment input form
     if (metadata.type === 'user_comment' && metadata.id === 'pending') {
       return (
-        <div className="font-sans bg-bg-secondary border border-bg-elevated rounded-lg p-4 my-3 mx-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-3">
+        <div className="font-sans bg-bg-secondary border border-bg-elevated rounded-lg p-3 my-2 mx-4 shadow-sm">
+          <div className="flex items-center gap-2 mb-2">
             <span className="text-sm font-medium text-text-primary">Add comment</span>
             <span className="text-xs text-text-muted">Line {metadata.lineNumber}</span>
           </div>
@@ -282,21 +282,21 @@ export function DiffBlock({
             value={commentText}
             onChange={(e) => setCommentText(e.target.value)}
             placeholder="Write a comment..."
-            className="w-full bg-bg-primary border border-bg-elevated rounded-lg p-3 text-sm text-text-primary placeholder:text-text-muted resize-none transition-shadow focus:outline-2 focus:outline-accent-primary focus:outline-offset-2"
+            className="w-full bg-bg-primary border border-bg-elevated rounded p-2 text-sm text-text-primary placeholder:text-text-muted resize-none transition-shadow focus:outline-2 focus:outline-accent-primary focus:outline-offset-2"
             rows={2}
             autoFocus
           />
-          <div className="flex items-center justify-end gap-2 mt-3">
+          <div className="flex items-center justify-end gap-2 mt-2">
             <button
               onClick={handleCancelComment}
-              className="px-3 py-1.5 text-sm text-text-muted hover:text-text-primary transition-colors"
+              className="px-2 py-1 text-sm text-text-muted hover:text-text-primary transition-colors"
             >
               Cancel
             </button>
             <button
               onClick={handleSubmitComment}
               disabled={!commentText.trim()}
-              className="px-4 py-1.5 text-sm font-medium bg-accent-primary text-bg-primary rounded-lg hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-3 py-1 text-sm font-medium bg-accent-primary text-bg-primary rounded hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Comment
             </button>
