@@ -2009,15 +2009,20 @@ export class SessionRepository {
    * Build WHERE clause for accessible sessions (owned + public).
    * Returns { clause, params } to be appended to queries.
    */
-  private buildAccessClause(userId?: string, clientId?: string): { clause: string; params: string[] } {
+  private buildAccessClause(
+    userId?: string,
+    clientId?: string,
+    options?: { tableAlias?: string }
+  ): { clause: string; params: string[] } {
+    const prefix = options?.tableAlias ? `${options.tableAlias}.` : '';
     if (userId && clientId) {
-      return { clause: "(user_id = ? OR client_id = ? OR visibility = 'public')", params: [userId, clientId] };
+      return { clause: `(${prefix}user_id = ? OR ${prefix}client_id = ? OR ${prefix}visibility = 'public')`, params: [userId, clientId] };
     } else if (userId) {
-      return { clause: "(user_id = ? OR visibility = 'public')", params: [userId] };
+      return { clause: `(${prefix}user_id = ? OR ${prefix}visibility = 'public')`, params: [userId] };
     } else if (clientId) {
-      return { clause: "(client_id = ? OR visibility = 'public')", params: [clientId] };
+      return { clause: `(${prefix}client_id = ? OR ${prefix}visibility = 'public')`, params: [clientId] };
     }
-    return { clause: "visibility = 'public'", params: [] };
+    return { clause: `${prefix}visibility = 'public'`, params: [] };
   }
 
   /**
@@ -2091,5 +2096,143 @@ export class SessionRepository {
       FROM sessions WHERE ${clause}
     `);
     return stmt.get(...params) as { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number };
+  }
+
+  // === Profile Stats Methods ===
+
+  /**
+   * Get profile statistics for a user.
+   */
+  getProfileStats(
+    userId?: string,
+    clientId?: string
+  ): {
+    totalSessions: number;
+    totalMessages: number;
+    activeDays: number;
+    filesEdited: number;
+    linesAdded: number;
+    linesDeleted: number;
+  } {
+    const { clause, params } = this.buildAccessClause(userId, clientId);
+    const { clause: clauseWithAlias, params: paramsWithAlias } = this.buildAccessClause(userId, clientId, { tableAlias: 's' });
+
+    // Total sessions
+    const sessionStmt = this.db.prepare(`
+      SELECT COUNT(*) as count FROM sessions WHERE ${clause}
+    `);
+    const totalSessions = (sessionStmt.get(...params) as { count: number }).count;
+
+    // Total messages - join with sessions to filter by ownership
+    const messageStmt = this.db.prepare(`
+      SELECT COUNT(*) as count FROM messages m
+      JOIN sessions s ON m.session_id = s.id
+      WHERE ${clauseWithAlias}
+    `);
+    const totalMessages = (messageStmt.get(...paramsWithAlias) as { count: number }).count;
+
+    // Active days - count distinct dates with session activity
+    const activeDaysStmt = this.db.prepare(`
+      SELECT COUNT(DISTINCT date(created_at)) as count FROM sessions WHERE ${clause}
+    `);
+    const activeDays = (activeDaysStmt.get(...params) as { count: number }).count;
+
+    // Files edited - sum of distinct files from diffs
+    const filesStmt = this.db.prepare(`
+      SELECT COUNT(DISTINCT d.filename) as count FROM diffs d
+      JOIN sessions s ON d.session_id = s.id
+      WHERE d.filename IS NOT NULL AND ${clauseWithAlias}
+    `);
+    const filesEdited = (filesStmt.get(...paramsWithAlias) as { count: number }).count;
+
+    // Lines added and deleted from diffs
+    const linesStmt = this.db.prepare(`
+      SELECT COALESCE(SUM(d.additions), 0) as added, COALESCE(SUM(d.deletions), 0) as deleted FROM diffs d
+      JOIN sessions s ON d.session_id = s.id
+      WHERE ${clauseWithAlias}
+    `);
+    const linesResult = linesStmt.get(...paramsWithAlias) as { added: number; deleted: number };
+
+    return { totalSessions, totalMessages, activeDays, filesEdited, linesAdded: linesResult.added, linesDeleted: linesResult.deleted };
+  }
+
+  /**
+   * Get activity heatmap data - sessions per day for the last N days.
+   */
+  getActivityHeatmap(
+    userId?: string,
+    clientId?: string,
+    days = 365
+  ): Array<{ date: string; count: number }> {
+    const { clause, params } = this.buildAccessClause(userId, clientId);
+
+    // Calculate start date
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    const startDateStr: string = startDate.toISOString().slice(0, 10);
+
+    const stmt = this.db.prepare(`
+      SELECT date(created_at) as date, COUNT(*) as count
+      FROM sessions
+      WHERE ${clause} AND date(created_at) >= ?
+      GROUP BY date(created_at)
+      ORDER BY date ASC
+    `);
+
+    return stmt.all(...params, startDateStr) as Array<{ date: string; count: number }>;
+  }
+
+  /**
+   * Get the longest streak of consecutive active days.
+   */
+  getLongestStreak(
+    userId?: string,
+    clientId?: string
+  ): number {
+    const { clause, params } = this.buildAccessClause(userId, clientId);
+
+    // Get all distinct active dates
+    const stmt = this.db.prepare(`
+      SELECT DISTINCT date(created_at) as date
+      FROM sessions
+      WHERE ${clause}
+      ORDER BY date ASC
+    `);
+    const dates = stmt.all(...params) as Array<{ date: string }>;
+
+    if (dates.length === 0) return 0;
+
+    let maxStreak = 1;
+    let currentStreak = 1;
+
+    for (let i = 1; i < dates.length; i++) {
+      const prevDate = new Date(dates[i - 1]!.date);
+      const currDate = new Date(dates[i]!.date);
+      const diffDays = Math.round((currDate.getTime() - prevDate.getTime()) / (1000 * 60 * 60 * 24));
+
+      if (diffDays === 1) {
+        currentStreak++;
+        maxStreak = Math.max(maxStreak, currentStreak);
+      } else {
+        currentStreak = 1;
+      }
+    }
+
+    return maxStreak;
+  }
+
+  /**
+   * Get the user's earliest session date (join date for openctl).
+   */
+  getFirstSessionDate(
+    userId?: string,
+    clientId?: string
+  ): string | null {
+    const { clause, params } = this.buildAccessClause(userId, clientId);
+    const stmt = this.db.prepare(`
+      SELECT MIN(created_at) as first_date FROM sessions WHERE ${clause}
+    `);
+    const result = stmt.get(...params) as { first_date: string | null };
+    return result.first_date;
   }
 }

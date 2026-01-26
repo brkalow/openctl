@@ -9,6 +9,8 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { SpawnedSessionView } from './components/SpawnedSessionView';
 import { HomePage } from './components/HomePage';
 import { useClerkConfigured } from './components/AuthContext';
+import { ProfilePage } from './components/ProfilePage';
+import { ProfilePageV1 } from './components/ProfilePageV1';
 import { renderComponentsShowcase } from './views';
 import type { Session, Message, Diff, Review, Annotation } from '../db/schema';
 
@@ -390,6 +392,8 @@ export function App() {
           <Route path="/sessions/:id" element={<ProtectedRoute><SessionDetailLoader /></ProtectedRoute>} />
           <Route path="/s/:shareToken" element={<ProtectedRoute><SharedSessionLoader /></ProtectedRoute>} />
           <Route path="/_components" element={<ProtectedRoute><ComponentsShowcasePage /></ProtectedRoute>} />
+          <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+          <Route path="/profile/v1" element={<ProtectedRoute><ProfilePageV1 /></ProtectedRoute>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Layout>

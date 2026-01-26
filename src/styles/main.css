@@ -2,6 +2,7 @@
 
 /* Tell Tailwind v4 where to scan for classes */
 @source "../client/**/*.ts";
+@source "../client/**/*.tsx";
 @source "../../public/**/*.html";
 
 /* Minimal, pastel-forward dark theme
@@ -304,4 +305,28 @@ a:focus-visible {
 /* Hide diff content when collapsed */
 [data-collapsed] [data-diffs] {
   display: none;
+}
+
+/* === Activity Heatmap === */
+/* GitHub-style activity levels using accent cyan */
+.activity-level-1 {
+  background-color: rgba(103, 232, 249, 0.2);
+}
+
+.activity-level-2 {
+  background-color: rgba(103, 232, 249, 0.4);
+}
+
+.activity-level-3 {
+  background-color: rgba(103, 232, 249, 0.6);
+}
+
+.activity-level-4 {
+  background-color: var(--color-accent-primary);
+}
+
+/* Activity chart container smooth scroll */
+.activity-chart-container {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-bg-elevated) transparent;
 }

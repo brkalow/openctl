@@ -692,6 +692,8 @@ const server = Bun.serve<WebSocketData>({
     "/sessions/:id": homepage,
     "/s/:shareToken": homepage,
     "/_components": homepage,
+    "/profile": homepage,
+    "/profile/v1": homepage,
 
     // Server-rendered stats page
     "/stats": {
@@ -826,6 +828,10 @@ const server = Bun.serve<WebSocketData>({
 
     "/api/stats/homepage": {
       GET: (req: Request) => api.getHomepageStats(req),
+    },
+
+    "/api/profile": {
+      GET: (req: Request) => api.getProfile(req),
     },
 
     // Daemon status endpoints
