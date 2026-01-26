@@ -1451,6 +1451,66 @@ export function createApiRoutes(repo: SessionRepository) {
       });
     },
 
+    /**
+     * GET /api/profile
+     * Returns profile data for the authenticated user.
+     * Includes stats, activity heatmap, and preferred model/harness.
+     */
+    async getProfile(req: Request): Promise<Response> {
+      const auth = await extractAuth(req);
+
+      if (!auth.isAuthenticated) {
+        return jsonError("Unauthorized", 401);
+      }
+
+      const userId = auth.userId ?? undefined;
+      const clientId = auth.clientId ?? undefined;
+
+      // Get profile stats
+      const stats = repo.getProfileStats(userId, clientId);
+      const longestStreak = repo.getLongestStreak(userId, clientId);
+      const firstSessionDate = repo.getFirstSessionDate(userId, clientId);
+      const tokenTotals = repo.getTotalTokenUsage(userId, clientId);
+
+      // Get activity heatmap (last 365 days)
+      const activityData = repo.getActivityHeatmap(userId, clientId, 365);
+
+      // Fill in missing dates with 0 count
+      const activity: Array<{ date: string; count: number }> = [];
+      const activityMap = new Map(activityData.map(d => [d.date, d.count]));
+      const today = new Date();
+      for (let i = 364; i >= 0; i--) {
+        const date = new Date(today);
+        date.setDate(date.getDate() - i);
+        const dateStr = date.toISOString().split('T')[0]!;
+        activity.push({
+          date: dateStr,
+          count: activityMap.get(dateStr) || 0,
+        });
+      }
+
+      // Get preferred model and harness (top by usage)
+      const topModels = repo.getTopModelsByTokenUsage(userId, clientId, 1);
+      const topAgents = repo.getTopHarnessesBySessionCount(userId, clientId, 1);
+
+      return json({
+        stats: {
+          totalSessions: stats.totalSessions,
+          totalMessages: stats.totalMessages,
+          activeDays: stats.activeDays,
+          longestStreak,
+          filesEdited: stats.filesEdited,
+          linesAdded: stats.linesAdded,
+          linesDeleted: stats.linesDeleted,
+          preferredModel: topModels[0]?.model || null,
+          preferredHarness: topAgents[0]?.harness || null,
+          totalTokens: tokenTotals.input_tokens + tokenTotals.output_tokens,
+        },
+        activity,
+        joinedAt: firstSessionDate,
+      });
+    },
+
     // === Auth & Session Claiming Endpoints ===
 
     /**

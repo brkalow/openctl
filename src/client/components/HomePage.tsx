@@ -18,7 +18,7 @@ import type { Session } from '../../db/schema';
 
 type PermissionMode = 'relay' | 'auto-safe' | 'auto';
 
-function formatRelativeTime(dateString: string): string {
+export function formatRelativeTime(dateString: string): string {
   const date = new Date(dateString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
@@ -34,7 +34,7 @@ function formatRelativeTime(dateString: string): string {
 }
 
 // Helper to get the grouping key - prefer repo_url, fall back to project_path
-function getGroupKey(session: Session): string {
+export function getGroupKey(session: Session): string {
   // Extract org/repo from repo_url if available
   if (session.repo_url) {
     const match = session.repo_url.match(/github\.com[/:]([^/]+\/[^/.]+)/);
@@ -843,14 +843,14 @@ function ProjectGroup({
   );
 }
 
-interface SessionRowProps {
+export interface SessionRowProps {
   session: Session;
   isLive: boolean;
   isLast: boolean;
   showProject?: boolean; // Show project/repo name in timeline view
 }
 
-function SessionRow({ session, isLive, isLast, showProject }: SessionRowProps) {
+export function SessionRow({ session, isLive, isLast, showProject }: SessionRowProps) {
   const projectDisplay = getGroupKey(session);
 
   return (
