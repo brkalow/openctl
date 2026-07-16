@@ -6,7 +6,6 @@ import { spawnedSessionRegistry, type ParsedDiff } from "./lib/spawned-session-r
 import { createApiRoutes, addSessionSubscriber, removeSessionSubscriber, closeAllConnections, broadcastToSession } from "./routes/api";
 import { createPageRoutes } from "./routes/pages";
 import { handleBrowserMessage } from "./routes/browser-messages";
-import { isClerkProxyRequest, isClerkProxyEnabled, handleClerkProxy } from "./routes/clerk-proxy";
 import { handleGetPendingFeedback, handleMarkFeedbackDelivered, handleGetPendingFeedbackByClaudeSession, handleMarkSessionInteractive, handleMarkSessionFinished } from "./routes/feedback-api";
 import type { BrowserToServerMessage } from "./routes/websocket-types";
 import type { DaemonToServerMessage } from "./types/daemon-ws";
@@ -902,11 +901,6 @@ const server = Bun.serve<WebSocketData>({
   fetch(req, server) {
     const url = new URL(req.url);
 
-    // Proxy Clerk Frontend API requests through our domain (production only).
-    if (isClerkProxyRequest(url.pathname)) {
-      return handleClerkProxy(req, server);
-    }
-
     // Handle WebSocket upgrade for daemon connections
     if (url.pathname === "/api/daemon/ws") {
       const clientIdHeader = req.headers.get("X-Openctl-Client-ID");
@@ -1159,10 +1153,6 @@ if (server.port !== DEFAULT_PORT && !process.env.PORT) {
   console.log(`Port ${DEFAULT_PORT} in use, using ${server.port} instead`);
 }
 console.log(`openctl running at http://${HOST}:${server.port}`);
-
-if (isClerkProxyEnabled()) {
-  console.log(`Clerk FAPI proxy enabled at ${process.env.PUBLIC_CLERK_PROXY_URL}`);
-}
 
 // Idle timeout checker - runs every minute
 const idleTimeoutInterval = setInterval(() => {

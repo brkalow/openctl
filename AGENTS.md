@@ -16,13 +16,6 @@ A web application for storing and viewing Claude Code sessions.
 - Metadata like `gitBranch` and `model` may appear at the message level
 - Files touched can be extracted from `tool_use` blocks with names `Write`, `Edit`, or `NotebookEdit`
 
-### Clerk Frontend API Proxy
-- The app can proxy Clerk's FAPI at `/__clerk/*` (see `src/routes/clerk-proxy.ts`, wired in `src/server.ts` `fetch`).
-- Enable by setting both `PUBLIC_CLERK_PROXY_URL` (e.g. `https://openctl.dev/__clerk`) and `CLERK_SECRET_KEY`. The client passes `proxyUrl` to `ClerkProvider` (`src/client/main.tsx`); the same URL must be set in the Clerk Dashboard (Domains > Frontend API).
-- Clerk requires three forwarded headers: `Clerk-Proxy-Url`, `Clerk-Secret-Key`, `X-Forwarded-For`.
-- Gotcha: Bun's `fetch` transparently decompresses the upstream body, so the proxy must strip `content-encoding`/`content-length` from the response or the browser mis-decodes it.
-- Gotcha: proxying is **production-only** — Clerk dev instances don't support it (a dummy/invalid key yields a `host_invalid` error).
-
 ### Git Diff Extraction
 - The upload command extracts touched files from the session and filters the diff to only those files
 - If a branch from session metadata no longer exists (merged/deleted), diff extraction gracefully returns null
